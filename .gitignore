@@ -1,0 +1,19 @@
+result
+.direnv
+.envrc
+.bin/
+node_modules/
+.claude/
+
+# moonbit build artifacts
+bench/_build/
+
+# profile outputs
+*.cpuprofile
+*.pb
+*.pb.gz
+*.prof
+*.syms.json
+native-samply.json
+native-samply.json.gz
+wasm-wzprof.pb.gz

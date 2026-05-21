@@ -1,0 +1,7 @@
+import {
+  "mizchi/bench" @bench,
+}
+
+options(
+  "is-main": true,
+)
