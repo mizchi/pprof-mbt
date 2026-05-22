@@ -1,0 +1,7 @@
+import {
+  "moonbitlang/core/priority_queue" @pq,
+}
+
+options(
+  "is-main": true,
+)
