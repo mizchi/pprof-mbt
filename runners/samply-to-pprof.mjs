@@ -1,46 +1,37 @@
 // Convert samply's Firefox-Profiler JSON (+ .syms.json sidecar) into pprof.
-// Required so the native-backend profile can be inspected with the same
-// `go tool pprof` tooling as the wasm-gc / js paths.
 //
-// Inlining: we expand the inline-frame chain reported by samply's
-// presymbolicate sidecar, so a hot address inside main gets attributed
-// to mandel_point / mandel_sum / main instead of just main.
+// samply stores raw RVAs in frameTable.address and ships symbol info in a
+// separate .syms.json sidecar. For each address we binary-search the lib's
+// symbol_table for the enclosing function, and expand inline frames so a
+// hot pc inside `main` is attributed to mandel_point / mandel_sum / main
+// rather than just main. The rest of the pprof construction is in
+// runners/lib/firefox-to-pprof.mjs.
 
-import { readFileSync, writeFileSync } from "node:fs";
-import { gunzipSync, gzipSync } from "node:zlib";
-import {
-  Profile,
-  Sample,
-  Location,
-  Line,
-  Function as PFunction,
-  Mapping,
-  ValueType,
-  StringTable,
-} from "pprof-format";
-import { demangle } from "./lib/demangle.mjs";
+import { readFileSync } from "node:fs";
+import { gunzipSync } from "node:zlib";
+import { writePprofFromFirefox } from "./lib/firefox-to-pprof.mjs";
 
 const [, , inPath = "native-samply.json.gz", symsPath = inPath.replace(/\.gz$/, "") + ".syms.json", outPath = "native.pb.gz"] =
   process.argv;
 
-const buf = readFileSync(inPath);
-const raw = inPath.endsWith(".gz") ? gunzipSync(buf) : buf;
-const j = JSON.parse(raw.toString("utf8"));
+const raw = readFileSync(inPath);
+const profile = JSON.parse(
+  (inPath.endsWith(".gz") ? gunzipSync(raw) : raw).toString("utf8"),
+);
 const syms = JSON.parse(readFileSync(symsPath, "utf8"));
 
-// Index syms by debugName so we can look up by lib name.
+// Index syms by debugName so we can dispatch on the lib that owns a frame.
 const symsByDebugName = new Map();
 for (const lib of syms.data) {
-  // Build a sorted symbol table for binary search on rva.
   const table = lib.symbol_table.slice().sort((a, b) => a.rva - b.rva);
   symsByDebugName.set(lib.debug_name, { table, stringTable: syms.string_table });
 }
 
-function lookupSymbol(libName, rva) {
-  const entry = symsByDebugName.get(libName);
+function lookupSymbol(libDebugName, rva) {
+  const entry = symsByDebugName.get(libDebugName);
   if (!entry) return null;
-  const { table, stringTable } = entry;
-  // Binary search for largest table[i].rva <= rva
+  const { table, stringTable: st } = entry;
+  // Binary search for the largest table[i].rva <= rva.
   let lo = 0, hi = table.length - 1, best = -1;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
@@ -54,154 +45,52 @@ function lookupSymbol(libName, rva) {
   if (best < 0) return null;
   const sym = table[best];
   if (rva >= sym.rva + sym.size) return null;
-  // Build the inline chain (innermost first). samply's `frames` lists
-  // outer→inner (callee at end), so we reverse for leaf-first.
-  const frames = sym.frames
+  // samply's `frames` lists outer→inner; reverse so the leaf is first
+  // (pprof's Location.line[] expects leaf first).
+  return sym.frames
     ? sym.frames.slice().reverse().map((f) => ({
-        name: stringTable[f.function] ?? stringTable[sym.symbol],
-        file: f.file !== undefined ? stringTable[f.file] : "",
+        name: st[f.function] ?? st[sym.symbol],
+        file: f.file !== undefined ? st[f.file] : "",
         line: f.line ?? 0,
       }))
-    : [{ name: stringTable[sym.symbol], file: "", line: 0 }];
-  return frames;
+    : [{ name: st[sym.symbol], file: "", line: 0 }];
 }
 
-const stringTable = new StringTable();
-const sampleTypes = [
-  new ValueType({ type: stringTable.dedup("samples"), unit: stringTable.dedup("count") }),
-  new ValueType({ type: stringTable.dedup("cpu"), unit: stringTable.dedup("nanoseconds") }),
-];
-const periodType = new ValueType({
-  type: stringTable.dedup("cpu"),
-  unit: stringTable.dedup("nanoseconds"),
-});
-
-// One mapping per lib; pprof requires at least one.
-const mappings = [];
-const mappingIdByLibIndex = new Map();
-for (let i = 0; i < j.libs.length; i++) {
-  const lib = j.libs[i];
-  const m = new Mapping({
-    id: BigInt(i + 1),
-    filename: stringTable.dedup(lib.name),
-  });
-  mappings.push(m);
-  mappingIdByLibIndex.set(i, m.id);
-}
-
-const functions = [];
-const locations = [];
-const funcIdByKey = new Map();
-
-function getFunctionId(rawName, file) {
-  const pretty = demangle(rawName);
-  const key = `${rawName}|${file}`;
-  let id = funcIdByKey.get(key);
-  if (id !== undefined) return id;
-  id = BigInt(functions.length + 1);
-  functions.push(
-    new PFunction({
-      id,
-      name: stringTable.dedup(pretty),
-      systemName: stringTable.dedup(rawName),
-      filename: stringTable.dedup(file),
-    }),
-  );
-  funcIdByKey.set(key, id);
-  return id;
-}
-
-const locIdByKey = new Map();
-function getLocationId(libIndex, rva) {
-  const key = `${libIndex}:${rva}`;
-  let id = locIdByKey.get(key);
-  if (id !== undefined) return id;
-  id = BigInt(locations.length + 1);
-  const lib = j.libs[libIndex];
-  const frames = lib ? lookupSymbol(lib.debugName, rva) : null;
-  const lines = frames
-    ? frames.map(
-        (fr) =>
-          new Line({
-            functionId: getFunctionId(fr.name, fr.file),
-            line: fr.line,
-          }),
-      )
-    : [
-        new Line({
-          functionId: getFunctionId(`${lib?.name ?? "??"}+0x${rva.toString(16)}`, ""),
-          line: 0,
-        }),
-      ];
-  locations.push(
-    new Location({
-      id,
-      mappingId: mappingIdByLibIndex.get(libIndex) ?? 1n,
-      address: BigInt(rva),
-      line: lines,
-    }),
-  );
-  locIdByKey.set(key, id);
-  return id;
-}
-
-// Build samples: each thread's samples reference stackTable[stack] which is
-// a linked list of frames (leaf first). frame.address is RVA inside frame's lib.
-const samples = [];
-for (const t of j.threads) {
-  const { frameTable, stackTable, samples: sm, resourceTable, funcTable } = t;
-  const sampleCount = sm.length;
-  const stackToLocs = new Map();
-  function locsForStack(stackId) {
-    if (stackId === null || stackId === undefined) return [];
-    if (stackToLocs.has(stackId)) return stackToLocs.get(stackId);
-    const acc = [];
-    let s = stackId;
-    while (s !== null && s !== undefined) {
-      const frameId = stackTable.frame[s];
-      const addr = frameTable.address[frameId];
-      const funcId = frameTable.func[frameId];
-      // Resolve which lib this frame belongs to via resource → lib
+writePprofFromFirefox(
+  {
+    profile,
+    label: "samply→pprof",
+    resolveFrame(thread, frameIdx) {
+      const { frameTable, funcTable, resourceTable } = thread;
+      const addr = frameTable.address[frameIdx];
+      const funcId = frameTable.func[frameIdx];
       const res = funcTable.resource[funcId];
       const libIndex = res >= 0 ? resourceTable.lib[res] ?? 0 : 0;
-      acc.push(getLocationId(libIndex, addr));
-      s = stackTable.prefix[s];
-    }
-    stackToLocs.set(stackId, acc);
-    return acc;
-  }
-  const aggregate = new Map();
-  for (let i = 0; i < sampleCount; i++) {
-    const stk = sm.stack[i];
-    const w = sm.weight?.[i] ?? 1;
-    if (stk === null || stk === undefined) continue;
-    const key = stk;
-    aggregate.set(key, (aggregate.get(key) ?? 0) + w);
-  }
-  // Sampling rate: samply's default is 1000 Hz → 1 sample = 1 ms = 1e6 ns
-  const nsPerSample = 1_000_000;
-  for (const [stk, count] of aggregate) {
-    samples.push(
-      new Sample({
-        locationId: locsForStack(stk),
-        value: [count, count * nsPerSample],
-      }),
-    );
-  }
-}
-
-const profile = new Profile({
-  sampleType: sampleTypes,
-  sample: samples,
-  mapping: mappings,
-  location: locations,
-  function: functions,
-  stringTable,
-  periodType,
-  period: 1_000_000,
-});
-
-writeFileSync(outPath, gzipSync(profile.encode()));
-console.error(
-  `[pprof] ${samples.length} samples, ${functions.length} funcs, ${locations.length} locs → ${outPath}`,
+      const lib = profile.libs?.[libIndex];
+      const frames = lib ? lookupSymbol(lib.debugName, addr) : null;
+      if (frames) {
+        return frames.map((f) => ({ ...f, address: addr, mappingIndex: libIndex }));
+      }
+      return [
+        {
+          name: `${lib?.name ?? "??"}+0x${(addr ?? 0).toString(16)}`,
+          file: "",
+          line: 0,
+          address: addr,
+          mappingIndex: libIndex,
+        },
+      ];
+    },
+    resolveSample(thread, i) {
+      // samply runs at a fixed rate (default 1 kHz) — meta.interval is in ms.
+      const intervalMs = profile.meta?.interval ?? 1;
+      const count = thread.samples.weight?.[i] ?? 1;
+      return {
+        stack: thread.samples.stack[i],
+        count,
+        ns: count * Math.round(intervalMs * 1_000_000),
+      };
+    },
+  },
+  outPath,
 );
