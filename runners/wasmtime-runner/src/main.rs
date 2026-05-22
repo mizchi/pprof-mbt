@@ -1,12 +1,14 @@
 // wasmtime-runner: loads a moonbit wasm (non-gc target), provides the
-// `spectest.print_char` import moonrun-style modules expect, and samples
-// CPU usage with wasmtime's built-in GuestProfiler.
-//
-// The output is Firefox's "processed profile" JSON. Convert with
-// runners/wasmtime-to-pprof.mjs (or load directly into
+// `spectest.print_char` import moonrun-style modules expect, samples CPU
+// usage with wasmtime's built-in GuestProfiler, and writes a gzip'd pprof
+// directly. Pass `--json-out=path.json` to also dump the raw Firefox
+// Profiler JSON (handy when you want to inspect the profile in
 // https://profiler.firefox.com/).
 
-use std::fs::File;
+mod demangle;
+mod pprof;
+
+use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -22,9 +24,12 @@ use wasmtime::{Caller, Config, Engine, GuestProfiler, Linker, Module, Store, Upd
 struct Args {
     /// Path to the .wasm file
     wasm: PathBuf,
-    /// Output profile path (Firefox Profiler JSON)
-    #[arg(long, default_value = "wasmtime-guest.json")]
+    /// Output path for the gzip'd pprof
+    #[arg(long, default_value = "wasmtime-guest.pb.gz")]
     out: PathBuf,
+    /// If set, also write the Firefox Profiler JSON to this path
+    #[arg(long)]
+    json_out: Option<PathBuf>,
     /// Sampling interval in microseconds
     #[arg(long, default_value_t = 1000)]
     interval_us: u64,
@@ -79,7 +84,7 @@ impl Drop for EpochTicker {
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    let wasm_bytes = std::fs::read(&args.wasm)
+    let wasm_bytes = fs::read(&args.wasm)
         .with_context(|| format!("reading wasm at {}", args.wasm.display()))?;
 
     let mut config = Config::new();
@@ -112,7 +117,6 @@ fn main() -> Result<()> {
     );
     store.set_epoch_deadline(1);
     store.epoch_deadline_callback(|mut ctx| {
-        // Pull the profiler out, sample with the store, then put it back.
         if let Some(mut prof) = ctx.data_mut().profiler.take() {
             prof.sample(&ctx, Duration::ZERO);
             ctx.data_mut().profiler = Some(prof);
@@ -152,15 +156,33 @@ fn main() -> Result<()> {
         .into_data()
         .profiler
         .ok_or_else(|| anyhow::anyhow!("profiler was taken but never returned"))?;
-    let out = File::create(&args.out)
-        .with_context(|| format!("creating {}", args.out.display()))?;
-    profiler.finish(out)?;
 
+    // Serialize to JSON in memory so we can both write the JSON sidecar
+    // (when requested) and re-parse it for the pprof conversion.
+    let mut json_buf = Vec::new();
+    profiler.finish(&mut json_buf)?;
+
+    if let Some(json_path) = args.json_out.as_ref() {
+        fs::write(json_path, &json_buf)
+            .with_context(|| format!("writing {}", json_path.display()))?;
+    }
+
+    let firefox: pprof::FirefoxProfile = serde_json::from_slice(&json_buf)
+        .context("parsing wasmtime's GuestProfiler JSON")?;
+    let pprof_bytes = pprof::convert(&firefox)?;
+    fs::write(&args.out, &pprof_bytes)
+        .with_context(|| format!("writing {}", args.out.display()))?;
+
+    let sample_count: usize = firefox.threads.iter().map(|t| t.samples.length).sum();
     eprintln!(
-        "[wasmtime-runner] {} iter in {:.2?} → {}",
+        "[wasmtime-runner] {} iter in {:.2?} → {} ({} samples)",
         args.iterations,
         elapsed,
-        args.out.display()
+        args.out.display(),
+        sample_count
     );
+    if let Some(p) = args.json_out.as_ref() {
+        eprintln!("[wasmtime-runner] firefox json → {}", p.display());
+    }
     Ok(())
 }

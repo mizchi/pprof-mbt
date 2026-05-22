@@ -28,6 +28,7 @@
             wasmtime    # for CLI use + reference for wasmtime-runner
             cargo       # builds runners/wasmtime-runner
             rustc
+            protobuf    # protoc for prost-build (pprof emission)
           ];
 
           shellHook = ''
