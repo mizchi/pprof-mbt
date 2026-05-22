@@ -19,7 +19,7 @@ import (
 	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/experimental"
 
-	"wzprof-runner/internal/demangle"
+	"github.com/mizchi/pprof-mbt/go/demangle"
 )
 
 func demangleProfile(p *profile.Profile) {

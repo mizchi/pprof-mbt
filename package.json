@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "build:wasm-gc": "cd bench && moon build --release --no-strip --target=wasm-gc cmd/main",
     "build:js": "cd bench && moon build --release --target=js cmd/main",
@@ -15,6 +18,6 @@
     "profile:native": "samply record --save-only --unstable-presymbolicate -o native-samply.json.gz --no-open -- bench/_build/native/release/build/cmd/main/main.exe && node runners/samply-to-pprof.mjs native-samply.json.gz native-samply.json.syms.json native.pb.gz"
   },
   "devDependencies": {
-    "pprof-format": "^2.2.1"
+    "moonbit-pprof": "*"
   }
 }

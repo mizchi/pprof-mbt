@@ -9,7 +9,7 @@
 
 import { readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
-import { writePprofFromFirefox } from "./lib/firefox-to-pprof.mjs";
+import { writePprofFromFirefox } from "moonbit-pprof/firefox-to-pprof";
 
 const [, , inPath = "native-samply.json.gz", symsPath = inPath.replace(/\.gz$/, "") + ".syms.json", outPath = "native.pb.gz"] =
   process.argv;

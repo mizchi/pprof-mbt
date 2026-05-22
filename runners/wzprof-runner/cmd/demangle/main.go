@@ -12,7 +12,7 @@ import (
 
 	"github.com/google/pprof/profile"
 
-	"wzprof-runner/internal/demangle"
+	"github.com/mizchi/pprof-mbt/go/demangle"
 )
 
 func main() {
