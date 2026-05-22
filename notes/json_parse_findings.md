@@ -61,6 +61,21 @@ native は wasm の **約 3.4× 速い**。
 
 native のメモリ管理系合計は **約 22%**。wasm の 1/3。
 
+## 他 workload との比較
+
+[bench/cmd/](../bench/cmd/) には以下も入っている:
+
+| workload | 50 iter 等価 | mem-mgmt 比率 (wasm, `pprof-summary` 集計) |
+|---|---|---|
+| `cmd/json_parse` | 498 ms | **63.6%** |
+| `cmd/sorted_map_merge` | 54 ms | 48.9% |
+| `cmd/regex_match` | 42 ms | **76.7%** |
+
+3 workload とも CPU の **半分以上が refcount + malloc/free** に消えている。
+特に regex は `decref + incref` だけで 44%。
+
+`.bin/pprof-summary <profile.pb.gz>` で同じ集計を再現できる。
+
 ## 改善候補
 
 ### 1. wasm refcount オーバーヘッド (最大の効果)
@@ -96,11 +111,10 @@ native のメモリ管理系合計は **約 22%**。wasm の 1/3。
 
 ### 4. `Map::set_with_hash` / `Map::grow`
 
-- パース対象の各オブジェクトは 8 キー。grow しないサイズで作られていれば
-  insert はほぼ O(1)。
-- `parse_object` で `{` を見た瞬間に capacity を見積もる方法はないが、
-  `Map::with_capacity(8)` 程度のヒントは入れられる。最初の 1〜2 オブジェクトで
-  容量が固まれば、以降のオブジェクトでは grow 回数が減る。
+- パース対象の各オブジェクトは 8 キー。デフォルト容量 8 + load factor
+  13/16 = 0.81 で、7 キー目で grow が走る。
+- `parse_object` で `{` を見た瞬間に `Map([], capacity=16)` を渡すだけで
+  grow を 1 回減らせる (検証済み、後述)。
 
 ### 5. `parse_int64_inner` / `parse_double`
 
@@ -110,22 +124,58 @@ native のメモリ管理系合計は **約 22%**。wasm の 1/3。
   そう。中身を読まないと判断できないが、`fold_digits` が再度走るのが見えて
   いるので二度読みしている可能性が高い。
 
-## 提案
+## 検証ワークフロー (パッチ前後の比較)
 
-最大の効果がありそうなのは **(2) bytewise lex** と **(3) StringBuilder の
-size_hint / zero-copy fast path** で、core 側の小規模なパッチで対応可能。
-**(1) refcount elision** はコンパイラ側の最適化なので moonbit 本体への提案
-だが、JSON だけでなくあらゆる workload に効く。
+このリポジトリで `MOON_TOOLCHAIN_ROOT` を差し替えれば、bundled core を
+書き換えてビルドし、`go tool pprof -base` で diff が取れる。
 
-このリポジトリの `bench/cmd/json_parse/` を使えば
-パッチ前後の差分が wasmtime-runner ですぐ可視化できる:
+### セットアップ
 
 ```sh
-moon build --release --no-strip --target=wasm cmd/json_parse
-.bin/wasmtime-runner --interval-us 1000 --out before.pb.gz \
-  bench/_build/wasm/release/build/cmd/json_parse/json_parse.wasm
-# (patch core, rebuild)
+# nix store の moonbit を書き換え可能な場所にコピー
+cp -r /nix/store/<HASH>-moonbit /tmp/moonbit-patched
+chmod -R u+w /tmp/moonbit-patched
+
+# core のソースを書き換え (例: parse.mbt)
+$EDITOR /tmp/moonbit-patched/lib/core/json/parse.mbt
+
+# bundle を再ビルド
+nix develop --command bash -c '
+  cd /tmp/moonbit-patched/lib/core
+  moon bundle --release --target wasm
+'
+
+# bench を patched core で再ビルド
+nix develop --command bash -c '
+  export MOON_TOOLCHAIN_ROOT=/tmp/moonbit-patched
+  cd bench && rm -rf _build
+  /nix/store/<HASH>-moonbit/bin/.moon-wrapped build --release --no-strip --target=wasm cmd/json_parse
+'
+
+# 比較
 .bin/wasmtime-runner --interval-us 1000 --out after.pb.gz \
   bench/_build/wasm/release/build/cmd/json_parse/json_parse.wasm
+
 go tool pprof -base before.pb.gz after.pb.gz
+.bin/pprof-summary after.pb.gz
 ```
+
+### 実測: Map capacity hint パッチ
+
+`parse_object` で `let map = Map([])` → `let map = Map([], capacity=16)` に。
+
+| | before | after | delta |
+|---|---|---|---|
+| total wall | 498 ms | 494 ms | -0.8% (noise 内) |
+| `Map::set_with_hash` cum | - | - | **-18.7 ms** |
+| `Map::add_entry_to_tail` cum | - | - | **-8.7 ms** |
+| `moonbit.make_array_header` flat | - | - | **-8.8 ms** |
+
+パッチは **意図通り Map の grow を抑えた** (`set_with_hash` の cum 時間が
+~4% 減少) が、refcount オーバーヘッド (合計 30%+) がワークロード全体を
+支配しているので、ウォールタイムに見える差は出ない。
+
+→ 結論: **個別のアロケーション削減より、コンパイラ側 (refcount elision /
+move analysis) の改善のほうが json.parse 全体には効果がはるかに大きい**。
+逆に言えば、json.parse などの bench で wall time を 10〜30% 縮めるには
+moonc 側のパッチが必要。

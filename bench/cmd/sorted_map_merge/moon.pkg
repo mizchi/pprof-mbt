@@ -1,0 +1,7 @@
+import {
+  "moonbitlang/core/immut/sorted_map" @sorted_map,
+}
+
+options(
+  "is-main": true,
+)
