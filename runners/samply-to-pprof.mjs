@@ -18,6 +18,7 @@ import {
   ValueType,
   StringTable,
 } from "pprof-format";
+import { demangle } from "./lib/demangle.mjs";
 
 const [, , inPath = "native-samply.json.gz", symsPath = inPath.replace(/\.gz$/, "") + ".syms.json", outPath = "native.pb.gz"] =
   process.argv;
@@ -86,41 +87,6 @@ for (let i = 0; i < j.libs.length; i++) {
   });
   mappings.push(m);
   mappingIdByLibIndex.set(i, m.id);
-}
-
-function demangle(name) {
-  if (!name) return name;
-  // Mach-O carries a leading underscore (`_M0F…`); samply's inline-frame
-  // `function` strings strip it (`M0F…`). Normalise before parsing.
-  const match = name.match(/^_*(M0[A-Z].*)$/);
-  if (!match) return name;
-  const inner = match[1];
-  const stripped = inner.replace(/G[A-Za-z]+E$/, "");
-  const parts = [];
-  let i = stripped.length;
-  for (let guard = 0; guard < 50 && i > 0; guard++) {
-    let found = null;
-    for (let n = Math.min(i - 1, 64); n >= 1; n--) {
-      const chars = stripped.slice(i - n, i);
-      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(chars)) continue;
-      const dEnd = i - n;
-      let dStart = dEnd;
-      while (dStart > 0 && /\d/.test(stripped[dStart - 1])) dStart--;
-      if (dStart === dEnd) continue;
-      const target = String(n);
-      for (let ds = dStart; ds < dEnd; ds++) {
-        if (stripped.slice(ds, dEnd) === target) {
-          found = { chars, newI: ds };
-          break;
-        }
-      }
-      if (found) break;
-    }
-    if (!found) break;
-    parts.unshift(found.chars);
-    i = found.newI;
-  }
-  return parts.length ? parts.join("::") : name;
 }
 
 const functions = [];

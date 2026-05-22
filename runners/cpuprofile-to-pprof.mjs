@@ -14,6 +14,7 @@ import {
   ValueType,
   StringTable,
 } from "pprof-format";
+import { demangle } from "./lib/demangle.mjs";
 
 const [, , inPath = "wasm-gc.cpuprofile", outPath = "wasm-gc.pb.gz"] = process.argv;
 const cp = JSON.parse(readFileSync(inPath, "utf8"));
@@ -33,44 +34,6 @@ const functions = [];
 const locations = [];
 const funcIdByKey = new Map();
 const locIdByNode = new Map();
-
-// Decode moonbit's wasm symbol mangling well enough to be human-readable.
-// Example: `_M0FP26mizchi5bench9ackermann` → `mizchi::bench::ackermann`.
-// Each segment is `<decimal length><identifier of that length>`; segments are
-// concatenated with optional structural markers (P/B/C, a count digit, etc).
-// We parse from the right end and at each digit-run try every possible split,
-// taking the suffix of the digit-run as the length — that lets us recognise
-// the leading `2` of `26mizchi` as a separate count marker instead of part
-// of the length.
-function demangle(name) {
-  if (!name?.startsWith("_M")) return name;
-  const stripped = name.replace(/G[A-Za-z]+E$/, ""); // drop trailing generic marker like GsE/GuE
-  const parts = [];
-  let i = stripped.length;
-  for (let guard = 0; guard < 50 && i > 0; guard++) {
-    let found = null;
-    for (let n = Math.min(i - 1, 64); n >= 1; n--) {
-      const chars = stripped.slice(i - n, i);
-      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(chars)) continue;
-      const dEnd = i - n;
-      let dStart = dEnd;
-      while (dStart > 0 && /\d/.test(stripped[dStart - 1])) dStart--;
-      if (dStart === dEnd) continue;
-      const target = String(n);
-      for (let ds = dStart; ds < dEnd; ds++) {
-        if (stripped.slice(ds, dEnd) === target) {
-          found = { chars, newI: ds };
-          break;
-        }
-      }
-      if (found) break;
-    }
-    if (!found) break;
-    parts.unshift(found.chars);
-    i = found.newI;
-  }
-  return parts.length ? parts.join("::") : name;
-}
 
 function getFunctionId(cf) {
   const raw = cf.functionName || "(anonymous)";

@@ -6,20 +6,16 @@
 // runners/wasmtime-to-pprof.mjs (or load directly into
 // https://profiler.firefox.com/).
 
-use std::cell::RefCell;
 use std::fs::File;
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
 use clap::Parser;
-use wasmtime::{
-    Caller, Config, Engine, GuestProfiler, Linker, Module, Store, StoreContextMut,
-    UpdateDeadline,
-};
+use wasmtime::{Caller, Config, Engine, GuestProfiler, Linker, Module, Store, UpdateDeadline};
 
 #[derive(Parser, Debug)]
 #[command(about = "Profile a moonbit wasm with wasmtime's guest profiler")]
@@ -37,10 +33,48 @@ struct Args {
     iterations: usize,
 }
 
+/// Host state carried in the wasmtime `Store`.
+///
+/// `profiler` is wrapped in `Option` so the epoch-deadline callback can
+/// `take()` it out, call `sample()` with the store as `AsContext`, and put
+/// it back — `GuestProfiler::sample` needs `&mut self` *and* the store at
+/// the same time, which the borrow checker won't grant if the profiler
+/// lives behind a regular `&mut data().profiler`.
 struct HostState {
-    // Buffer for UTF-16 code units coming through spectest.print_char.
     line: Vec<u16>,
-    profiler: Rc<RefCell<GuestProfiler>>,
+    profiler: Option<GuestProfiler>,
+}
+
+/// Background thread that bumps wasmtime's epoch every `interval`, driving
+/// the deadline callback that samples the guest. RAII so callers don't
+/// have to remember to stop it.
+struct EpochTicker {
+    stop: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl EpochTicker {
+    fn start(engine: &Engine, interval: Duration) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_flag = stop.clone();
+        let engine = engine.clone();
+        let handle = thread::spawn(move || {
+            while !stop_flag.load(Ordering::Relaxed) {
+                thread::sleep(interval);
+                engine.increment_epoch();
+            }
+        });
+        Self { stop, handle: Some(handle) }
+    }
+}
+
+impl Drop for EpochTicker {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
 }
 
 fn main() -> Result<()> {
@@ -53,7 +87,7 @@ fn main() -> Result<()> {
     config.cranelift_opt_level(wasmtime::OptLevel::Speed);
     // GuestProfiler needs the pc → wasm offset map to resolve symbols.
     config.generate_address_map(true);
-    // ackermann(3,10) recurses ~16k deep — moonbit emits >32 bytes/frame so
+    // ackermann(3, 10) recurses ~16k deep — moonbit emits >32 bytes/frame so
     // the default 512 KiB wasm stack overflows. Bump both wasm + host caps.
     config.async_stack_size(16 * 1024 * 1024);
     config.max_wasm_stack(8 * 1024 * 1024);
@@ -62,48 +96,41 @@ fn main() -> Result<()> {
     let module = Module::new(&engine, &wasm_bytes)?;
 
     let interval = Duration::from_micros(args.interval_us);
-    let profiler = Rc::new(RefCell::new(GuestProfiler::new(
+    let profiler = GuestProfiler::new(
         &engine,
         "moonbit-guest",
         interval,
         vec![("main.wasm".to_string(), module.clone())],
-    )?));
+    )?;
 
     let mut store = Store::new(
         &engine,
         HostState {
             line: Vec::new(),
-            profiler: profiler.clone(),
+            profiler: Some(profiler),
         },
     );
     store.set_epoch_deadline(1);
-    store.epoch_deadline_callback(move |mut ctx: StoreContextMut<'_, HostState>| {
-        let prof = ctx.data().profiler.clone();
-        prof.borrow_mut().sample(&ctx, Duration::ZERO);
+    store.epoch_deadline_callback(|mut ctx| {
+        // Pull the profiler out, sample with the store, then put it back.
+        if let Some(mut prof) = ctx.data_mut().profiler.take() {
+            prof.sample(&ctx, Duration::ZERO);
+            ctx.data_mut().profiler = Some(prof);
+        }
         Ok(UpdateDeadline::Continue(1))
     });
 
-    // Bump the engine's epoch counter on a background thread so the
-    // deadline callback fires (and samples) every `interval`.
-    let engine_for_ticker = engine.clone();
-    let stop_ticker = Arc::new(AtomicBool::new(false));
-    let stop_flag = stop_ticker.clone();
-    let ticker = std::thread::spawn(move || {
-        while !stop_flag.load(Ordering::Relaxed) {
-            std::thread::sleep(interval);
-            engine_for_ticker.increment_epoch();
-        }
-    });
+    let _ticker = EpochTicker::start(&engine, interval);
 
     let mut linker: Linker<HostState> = Linker::new(&engine);
     linker.func_wrap(
         "spectest",
         "print_char",
         |mut caller: Caller<'_, HostState>, code: i32| {
+            // moonbit emits UTF-16 code units one at a time; flush on '\n'.
             let state = caller.data_mut();
-            if code == 10 {
-                let s: String = String::from_utf16_lossy(&state.line);
-                println!("{s}");
+            if code == b'\n' as i32 {
+                println!("{}", String::from_utf16_lossy(&state.line));
                 state.line.clear();
             } else {
                 state.line.push(code as u16);
@@ -119,22 +146,15 @@ fn main() -> Result<()> {
         start.call(&mut store, ())?;
     }
     let elapsed = t0.elapsed();
+    drop(_ticker); // stop epoch bumps before consuming store
 
-    stop_ticker.store(true, Ordering::Relaxed);
-    let _ = ticker.join();
-
-    // store holds the epoch_deadline_callback closure, which owns a clone of
-    // the profiler Rc. Drop it before unwrapping.
-    drop(start);
-    drop(instance);
-    drop(store);
-
+    let profiler = store
+        .into_data()
+        .profiler
+        .ok_or_else(|| anyhow::anyhow!("profiler was taken but never returned"))?;
     let out = File::create(&args.out)
         .with_context(|| format!("creating {}", args.out.display()))?;
-    Rc::try_unwrap(profiler)
-        .map_err(|_| anyhow::anyhow!("profiler still has outstanding refs"))?
-        .into_inner()
-        .finish(out)?;
+    profiler.finish(out)?;
 
     eprintln!(
         "[wasmtime-runner] {} iter in {:.2?} → {}",

@@ -12,99 +12,19 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"regexp"
-	"strconv"
-	"strings"
 
 	"github.com/google/pprof/profile"
 	"github.com/stealthrocket/wzprof"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/experimental"
+
+	"wzprof-runner/internal/demangle"
 )
-
-var manglePrefix = regexp.MustCompile(`^_*M0[A-Z]`)
-var genericSuffix = regexp.MustCompile(`G[A-Za-z]+E$`)
-
-// demangle decodes moonbit-style symbol names like `_M0FP26mizchi5bench9ackermann`
-// into a human path `mizchi::bench::ackermann` by scanning length-prefixed
-// segments backwards. See cpuprofile-to-pprof.mjs for the same algorithm in JS.
-func demangle(name string) string {
-	if !manglePrefix.MatchString(name) {
-		return name
-	}
-	inner := strings.TrimLeft(name, "_")
-	inner = genericSuffix.ReplaceAllString(inner, "")
-	parts := []string{}
-	i := len(inner)
-	isIdent := func(s string) bool {
-		if len(s) == 0 {
-			return false
-		}
-		c := s[0]
-		if !(c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
-			return false
-		}
-		for j := 1; j < len(s); j++ {
-			c := s[j]
-			if !(c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
-				return false
-			}
-		}
-		return true
-	}
-	isDigit := func(b byte) bool { return b >= '0' && b <= '9' }
-	for guard := 0; guard < 50 && i > 0; guard++ {
-		var found *struct {
-			chars string
-			newI  int
-		}
-		maxN := i - 1
-		if maxN > 64 {
-			maxN = 64
-		}
-		for n := maxN; n >= 1; n-- {
-			chars := inner[i-n : i]
-			if !isIdent(chars) {
-				continue
-			}
-			dEnd := i - n
-			dStart := dEnd
-			for dStart > 0 && isDigit(inner[dStart-1]) {
-				dStart--
-			}
-			if dStart == dEnd {
-				continue
-			}
-			target := strconv.Itoa(n)
-			for ds := dStart; ds < dEnd; ds++ {
-				if inner[ds:dEnd] == target {
-					found = &struct {
-						chars string
-						newI  int
-					}{chars, ds}
-					break
-				}
-			}
-			if found != nil {
-				break
-			}
-		}
-		if found == nil {
-			break
-		}
-		parts = append([]string{found.chars}, parts...)
-		i = found.newI
-	}
-	if len(parts) == 0 {
-		return name
-	}
-	return strings.Join(parts, "::")
-}
 
 func demangleProfile(p *profile.Profile) {
 	for _, fn := range p.Function {
-		pretty := demangle(fn.Name)
+		pretty := demangle.Symbol(fn.Name)
 		if pretty != fn.Name {
 			if fn.SystemName == "" || fn.SystemName == fn.Name {
 				fn.SystemName = fn.Name

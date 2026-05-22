@@ -15,41 +15,10 @@ import {
   ValueType,
   StringTable,
 } from "pprof-format";
+import { demangle } from "./lib/demangle.mjs";
 
 const [, , inPath = "wasmtime-guest.json", outPath = "wasmtime-guest.pb.gz"] = process.argv;
 const j = JSON.parse(readFileSync(inPath, "utf8"));
-
-function demangle(name) {
-  if (!name) return name;
-  const match = name.match(/^_*(M0[A-Z].*)$/);
-  if (!match) return name;
-  const inner = match[1].replace(/G[A-Za-z]+E$/, "");
-  const parts = [];
-  let i = inner.length;
-  for (let guard = 0; guard < 50 && i > 0; guard++) {
-    let found = null;
-    for (let n = Math.min(i - 1, 64); n >= 1; n--) {
-      const chars = inner.slice(i - n, i);
-      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(chars)) continue;
-      const dEnd = i - n;
-      let dStart = dEnd;
-      while (dStart > 0 && /\d/.test(inner[dStart - 1])) dStart--;
-      if (dStart === dEnd) continue;
-      const target = String(n);
-      for (let ds = dStart; ds < dEnd; ds++) {
-        if (inner.slice(ds, dEnd) === target) {
-          found = { chars, newI: ds };
-          break;
-        }
-      }
-      if (found) break;
-    }
-    if (!found) break;
-    parts.unshift(found.chars);
-    i = found.newI;
-  }
-  return parts.length ? parts.join("::") : name;
-}
 
 const stringTable = new StringTable();
 const sampleTypes = [
