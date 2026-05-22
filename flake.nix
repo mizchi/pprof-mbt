@@ -25,6 +25,9 @@
             graphviz    # pprof -svg needs dot
             samply      # macOS/Linux sampling profiler → Firefox JSON, converted to pprof
             gperftools  # libprofiler.dylib (DYLD_INSERT_LIBRARIES route)
+            wasmtime    # for CLI use + reference for wasmtime-runner
+            cargo       # builds runners/wasmtime-runner
+            rustc
           ];
 
           shellHook = ''

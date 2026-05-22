@@ -17,3 +17,7 @@ bench/_build/
 native-samply.json
 native-samply.json.gz
 wasm-wzprof.pb.gz
+wasmtime-guest.json
+
+# Rust build artifacts
+runners/wasmtime-runner/target/

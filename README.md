@@ -10,12 +10,18 @@ nix develop
 
 [moonbit-overlay](https://github.com/moonbit-community/moonbit-overlay) 経由で `moon`、その他 Node.js / Go (pprof CLI) / samply / gperftools / wabt が入る。
 
-`wzprof-runner` と `pprof-demangle` は初回のみビルドが必要：
+ネイティブ製の runner は初回のみビルドが必要：
 
 ```sh
 mkdir -p .bin
+# wasm 経路 (推奨): wasmtime + GuestProfiler
+( cd runners/wasmtime-runner && cargo build --release )
+cp runners/wasmtime-runner/target/release/wasmtime-runner .bin/
+
+# wasm 経路 (legacy): wzprof (15 分かかるので参考用)
 ( cd runners/wzprof-runner && go build -buildvcs=false -o ../../.bin/wzprof-runner . )
 ( cd runners/wzprof-runner && go build -buildvcs=false -o ../../.bin/pprof-demangle ./cmd/demangle )
+
 npm install
 ```
 
@@ -65,21 +71,29 @@ node runners/cpuprofile-to-pprof.mjs js.cpuprofile js.pb.gz
 
 JS バックエンドは moonbit の mangled シンボルをそのまま JS 関数名として吐く (`function _M0FP26mizchi5bench3fib(n) {...}`)。Node の inspector がそれを CPU profile にそのまま入れるので、同じ変換スクリプトが使える。
 
-### wasm (MVP, wzprof)
+### wasm (推奨: wasmtime + GuestProfiler)
 
 ```sh
 ( cd bench && moon build --release --no-strip --target=wasm cmd/main )
-.bin/wzprof-runner -cpuprofile wasm.pb.gz -sample 0.05 bench/_build/wasm/release/build/cmd/main/main.wasm
-.bin/pprof-demangle wasm.pb.gz wasm.demangled.pb.gz
+( cd runners/wasmtime-runner && cargo build --release )
+cp runners/wasmtime-runner/target/release/wasmtime-runner .bin/
+.bin/wasmtime-runner --interval-us 1000 --out wasmtime-guest.json \
+  bench/_build/wasm/release/build/cmd/main/main.wasm
+node runners/wasmtime-to-pprof.mjs wasmtime-guest.json wasmtime-guest.pb.gz
 ```
 
 仕組み:
 
-- 公式 `wzprof` CLI は WASI モジュールを前提にしてるが、moonbit の wasm 出力は `spectest.print_char` (moonrun の慣習) しか import しない。
-- `runners/wzprof-runner/` で wzprof をライブラリとして使い、その import を自前で実装し、`CPUProfiler` で pprof 出力。
-- wzprof 出力はマングル名のままなので `.bin/pprof-demangle` で再書き込み。
+- wasmtime CLI の `--profile=guest` 相当を Rust API で組む。Cranelift JIT で wasm をフルスピード実行しつつ、別スレッドで `engine.increment_epoch()` を周期的に呼び、`epoch_deadline_callback` 内で `GuestProfiler::sample` が回る。
+- `spectest.print_char` host import は `Linker::func_wrap` で実装。
+- 出力は Firefox Profiler JSON。`wasmtime-to-pprof.mjs` が demangle 込みで pprof 化。
+- ackermann(3,10) は wasmtime のデフォルト wasm stack (512 KiB) を超えるので、`max_wasm_stack(8 MiB)` + `async_stack_size(16 MiB)` を上げてある。
 
-注意: wazero インタプリタは V8/JIT より大幅に遅い (デフォルト workload で 10〜15 分かかる)。実用には workload を小さくするか sample レートを下げる。
+実行時間: V8/native と同等 (デフォルト workload で 250ms 程度)。
+
+### wasm (legacy: wzprof) ※非推奨
+
+`runners/wzprof-runner/` は最初のプロトタイプとして残してある。wazero インタプリタは Cranelift JIT より 3000x 以上遅く、同じ workload で 14 分かかる。`--sample 0.05` でサンプリング率を落とせばマシだが、結局 mandel_sum 等が profile から消えるなど精度も落ちる。実用には wasmtime-runner を使う。
 
 ### native (samply 経由)
 
@@ -104,7 +118,8 @@ node runners/samply-to-pprof.mjs native-samply.json.gz native-samply.json.syms.j
 |---------|---------------|------------|---------|-----------|
 | wasm-gc | Node inspector (V8) | `WebAssembly.instantiate` + `Profiler.start` | `cpuprofile-to-pprof.mjs` | wasm の `name` custom section + 自前 demangle |
 | js      | Node inspector (V8) | dynamic `import()` + `Profiler.start` | `cpuprofile-to-pprof.mjs` | JS 関数名 (= マングル名) + 自前 demangle |
-| wasm    | wzprof (wazero) | カスタム host w/ spectest import | wzprof が直接 pprof | wasm `name` section + 自前 demangle |
+| wasm    | wasmtime GuestProfiler (Cranelift JIT) | `epoch_deadline_callback` + `GuestProfiler::sample` | `wasmtime-to-pprof.mjs` | wasm `name` section + 自前 demangle |
+| wasm (legacy) | wzprof (wazero interpreter) | カスタム host w/ spectest import | wzprof が直接 pprof | wasm `name` section + Go 製 demangler |
 | native  | samply (Mach-O / ELF) | プロセス attach サンプリング | `samply-to-pprof.mjs` | samply の presymbolicate sidecar + 自前 demangle |
 
 どのバックエンドでもマングル名 (`_M0FP26mizchi5bench9ackermann` の類) を pprof に流せ、共通の demangle ルーチンで `mizchi::bench::ackermann` に戻せた。pprof 上でホットスポット (ackermann) が同じように識別できる。
