@@ -116,7 +116,10 @@ npm run build:wasm && npm run profile:wasm
   で wasm をフルスピード実行しつつ、別スレッドで `engine.increment_epoch()`
   を周期的に呼び、`epoch_deadline_callback` 内で `GuestProfiler::sample`
   が回る。
-- `spectest.print_char` host import は `Linker::func_wrap` で実装。
+- host import は `Linker::func_wrap` で実装。レガシーな
+  `spectest.print_char` と、最近の moonbit が出す
+  `wasi_snapshot_preview1.fd_write` の両方を minimal stub で受ける
+  (iovs を memory から読んで stdout に流すだけ)。
 - `GuestProfiler::finish` の出力 (Firefox Profiler JSON) を in-memory で
   受け取り、`firefox-to-pprof` crate で pprof + gzip を直接書き出す。
 - ackermann(3, 10) は wasmtime のデフォルト wasm stack (512 KiB) を超える

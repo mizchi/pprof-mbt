@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
 use clap::Parser;
-use wasmtime::{Caller, Config, Engine, Linker, Module, Store};
+use wasmtime::{Caller, Config, Engine, Extern, Linker, Module, Store};
 use wasmtime_guest_pprof::{
     json_to_pprof, ProfileSession, ProfilerHost, ProfilerHostExt as _, TakeProfileSession,
 };
@@ -43,6 +43,10 @@ struct Args {
 /// profile session.
 struct HostState {
     line: Vec<u16>,
+    /// Accumulator for the WASI `fd_write` path. Modern moonbit emits
+    /// `wasi_snapshot_preview1.fd_write` instead of `spectest.print_char`;
+    /// we buffer by-byte and flush on '\n'.
+    stdout: Vec<u8>,
     profiler: ProfileSession,
 }
 
@@ -88,6 +92,7 @@ fn main() -> Result<()> {
         &engine,
         HostState {
             line: Vec::new(),
+            stdout: Vec::new(),
             profiler: session,
         },
     );
@@ -107,6 +112,58 @@ fn main() -> Result<()> {
             } else {
                 state.line.push(code as u16);
             }
+        },
+    )?;
+    // Recent moonbit emits `wasi_snapshot_preview1.fd_write` for println.
+    // Minimal stub: walk the iovs, buffer bytes, flush stdout on newline.
+    linker.func_wrap(
+        "wasi_snapshot_preview1",
+        "fd_write",
+        |mut caller: Caller<'_, HostState>,
+         fd: i32,
+         iovs_ptr: i32,
+         iovs_len: i32,
+         nwritten_ptr: i32|
+         -> i32 {
+            let mem = match caller.get_export("memory") {
+                Some(Extern::Memory(m)) => m,
+                _ => return 8, // BADF
+            };
+            let mut total: u32 = 0;
+            let mut payload: Vec<u8> = Vec::new();
+            let data = mem.data(&caller);
+            for i in 0..iovs_len as usize {
+                let entry = iovs_ptr as usize + i * 8;
+                if entry + 8 > data.len() {
+                    return 28; // EINVAL-ish
+                }
+                let buf_ptr = u32::from_le_bytes(data[entry..entry + 4].try_into().unwrap()) as usize;
+                let buf_len = u32::from_le_bytes(data[entry + 4..entry + 8].try_into().unwrap()) as usize;
+                if buf_ptr + buf_len > data.len() {
+                    return 28;
+                }
+                payload.extend_from_slice(&data[buf_ptr..buf_ptr + buf_len]);
+                total += buf_len as u32;
+            }
+            // Write the byte-count back, then flush per-line into stdout/err.
+            let nwritten_bytes = total.to_le_bytes();
+            let mem_mut = mem.data_mut(&mut caller);
+            let np = nwritten_ptr as usize;
+            if np + 4 <= mem_mut.len() {
+                mem_mut[np..np + 4].copy_from_slice(&nwritten_bytes);
+            }
+            let state = caller.data_mut();
+            state.stdout.extend_from_slice(&payload);
+            while let Some(nl) = state.stdout.iter().position(|&b| b == b'\n') {
+                let line: Vec<u8> = state.stdout.drain(..=nl).collect();
+                let s = String::from_utf8_lossy(&line[..line.len() - 1]);
+                if fd == 2 {
+                    eprintln!("{}", s);
+                } else {
+                    println!("{}", s);
+                }
+            }
+            0
         },
     )?;
 

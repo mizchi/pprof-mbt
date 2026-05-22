@@ -179,3 +179,10 @@ go tool pprof -base before.pb.gz after.pb.gz
 move analysis) の改善のほうが json.parse 全体には効果がはるかに大きい**。
 逆に言えば、json.parse などの bench で wall time を 10〜30% 縮めるには
 moonc 側のパッチが必要。
+
+この仮説は同じ workload を 4 バックエンドで計測することで定量的に裏付け
+られた。詳細は [backend_comparison.md](backend_comparison.md): wasm-gc は
+wasm の **約 3.3× 速い** (json_parse 619→188 ms)。refcount を消した瞬間
+に他のホットスポット (parse_object / Map::set_with_hash / lex_string の
+`to_owned()` 等) が見えるようになるので、userland の改善検証は今後
+**wasm-gc を main metric にする** べき。
