@@ -1,0 +1,12 @@
+[package]
+name = "moonbit-demangle"
+description = "Decode MoonBit's symbol mangling (e.g. `_M0FP26mizchi5bench9ackermann`) into a readable `mizchi::bench::ackermann` path."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+categories = ["development-tools::debugging"]
+keywords = ["moonbit", "demangle", "symbol", "profiling"]
+readme = "README.md"
+
+[lib]

@@ -1,25 +1,18 @@
 [package]
 name = "wasmtime-runner"
-version = "0.1.0"
-edition = "2021"
+description = "CLI that profiles a MoonBit wasm binary via wasmtime's GuestProfiler and writes pprof directly."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 publish = false
 
 [dependencies]
-wasmtime = { version = "44", features = ["profiling"] }
-anyhow = "1"
-clap = { version = "4", features = ["derive"] }
-prost = "0.13"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-flate2 = "1"
-
-[build-dependencies]
-prost-build = "0.13"
+anyhow.workspace = true
+clap.workspace = true
+wasmtime.workspace = true
+wasmtime-guest-pprof.workspace = true
 
 [[bin]]
 name = "wasmtime-runner"
 path = "src/main.rs"
-
-[profile.release]
-opt-level = 3
-lto = "thin"

@@ -19,5 +19,6 @@ native-samply.json.gz
 wasm-wzprof.pb.gz
 wasmtime-guest.json
 
-# Rust build artifacts
+# Rust build artifacts (workspace root)
+target/
 runners/wasmtime-runner/target/

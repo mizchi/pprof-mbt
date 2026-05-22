@@ -1,23 +1,23 @@
-// wasmtime-runner: loads a moonbit wasm (non-gc target), provides the
-// `spectest.print_char` import moonrun-style modules expect, samples CPU
-// usage with wasmtime's built-in GuestProfiler, and writes a gzip'd pprof
-// directly. Pass `--json-out=path.json` to also dump the raw Firefox
-// Profiler JSON (handy when you want to inspect the profile in
-// https://profiler.firefox.com/).
-
-mod demangle;
-mod pprof;
+// wasmtime-runner: profile a moonbit wasm (non-gc target) with wasmtime's
+// GuestProfiler and write the result as gzip'd pprof.
+//
+// Most of the work lives in the workspace crates:
+//   - wasmtime-guest-pprof: GuestProfiler driving + pprof emission
+//   - firefox-to-pprof:     the Firefox JSON → pprof conversion
+//   - moonbit-demangle:     symbol demangling
+//
+// This file is just the CLI + the moonbit-specific spectest host import.
 
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
 use clap::Parser;
-use wasmtime::{Caller, Config, Engine, GuestProfiler, Linker, Module, Store, UpdateDeadline};
+use wasmtime::{Caller, Config, Engine, Linker, Module, Store};
+use wasmtime_guest_pprof::{
+    json_to_pprof, ProfileSession, ProfilerHost, ProfilerHostExt as _, TakeProfileSession,
+};
 
 #[derive(Parser, Debug)]
 #[command(about = "Profile a moonbit wasm with wasmtime's guest profiler")]
@@ -38,47 +38,23 @@ struct Args {
     iterations: usize,
 }
 
-/// Host state carried in the wasmtime `Store`.
-///
-/// `profiler` is wrapped in `Option` so the epoch-deadline callback can
-/// `take()` it out, call `sample()` with the store as `AsContext`, and put
-/// it back — `GuestProfiler::sample` needs `&mut self` *and* the store at
-/// the same time, which the borrow checker won't grant if the profiler
-/// lives behind a regular `&mut data().profiler`.
+/// Host state carried in the wasmtime `Store`. Owns the line buffer used
+/// by the moonrun-style `spectest.print_char` host function and the
+/// profile session.
 struct HostState {
     line: Vec<u16>,
-    profiler: Option<GuestProfiler>,
+    profiler: ProfileSession,
 }
 
-/// Background thread that bumps wasmtime's epoch every `interval`, driving
-/// the deadline callback that samples the guest. RAII so callers don't
-/// have to remember to stop it.
-struct EpochTicker {
-    stop: Arc<AtomicBool>,
-    handle: Option<JoinHandle<()>>,
-}
-
-impl EpochTicker {
-    fn start(engine: &Engine, interval: Duration) -> Self {
-        let stop = Arc::new(AtomicBool::new(false));
-        let stop_flag = stop.clone();
-        let engine = engine.clone();
-        let handle = thread::spawn(move || {
-            while !stop_flag.load(Ordering::Relaxed) {
-                thread::sleep(interval);
-                engine.increment_epoch();
-            }
-        });
-        Self { stop, handle: Some(handle) }
+impl ProfilerHost for HostState {
+    fn profiler(&mut self) -> &mut ProfileSession {
+        &mut self.profiler
     }
 }
 
-impl Drop for EpochTicker {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        if let Some(h) = self.handle.take() {
-            let _ = h.join();
-        }
+impl TakeProfileSession for HostState {
+    fn take_session(store: Store<Self>) -> ProfileSession {
+        store.into_data().profiler
     }
 }
 
@@ -101,7 +77,7 @@ fn main() -> Result<()> {
     let module = Module::new(&engine, &wasm_bytes)?;
 
     let interval = Duration::from_micros(args.interval_us);
-    let profiler = GuestProfiler::new(
+    let session = ProfileSession::new(
         &engine,
         "moonbit-guest",
         interval,
@@ -112,19 +88,11 @@ fn main() -> Result<()> {
         &engine,
         HostState {
             line: Vec::new(),
-            profiler: Some(profiler),
+            profiler: session,
         },
     );
-    store.set_epoch_deadline(1);
-    store.epoch_deadline_callback(|mut ctx| {
-        if let Some(mut prof) = ctx.data_mut().profiler.take() {
-            prof.sample(&ctx, Duration::ZERO);
-            ctx.data_mut().profiler = Some(prof);
-        }
-        Ok(UpdateDeadline::Continue(1))
-    });
-
-    let _ticker = EpochTicker::start(&engine, interval);
+    HostState::install(&mut store);
+    let _ticker = HostState::start_ticker(&engine, interval);
 
     let mut linker: Linker<HostState> = Linker::new(&engine);
     linker.func_wrap(
@@ -150,36 +118,26 @@ fn main() -> Result<()> {
         start.call(&mut store, ())?;
     }
     let elapsed = t0.elapsed();
-    drop(_ticker); // stop epoch bumps before consuming store
+    drop(_ticker); // stop epoch bumps before consuming the store
 
-    let profiler = store
-        .into_data()
-        .profiler
-        .ok_or_else(|| anyhow::anyhow!("profiler was taken but never returned"))?;
-
-    // Serialize to JSON in memory so we can both write the JSON sidecar
-    // (when requested) and re-parse it for the pprof conversion.
-    let mut json_buf = Vec::new();
-    profiler.finish(&mut json_buf)?;
+    // Extract the session, then derive both outputs from the same JSON.
+    let session = HostState::take_session(store);
+    let mut json = Vec::new();
+    session.into_json(&mut json)?;
 
     if let Some(json_path) = args.json_out.as_ref() {
-        fs::write(json_path, &json_buf)
+        fs::write(json_path, &json)
             .with_context(|| format!("writing {}", json_path.display()))?;
     }
-
-    let firefox: pprof::FirefoxProfile = serde_json::from_slice(&json_buf)
-        .context("parsing wasmtime's GuestProfiler JSON")?;
-    let pprof_bytes = pprof::convert(&firefox)?;
+    let pprof_bytes = json_to_pprof(&json)?;
     fs::write(&args.out, &pprof_bytes)
         .with_context(|| format!("writing {}", args.out.display()))?;
 
-    let sample_count: usize = firefox.threads.iter().map(|t| t.samples.length).sum();
     eprintln!(
-        "[wasmtime-runner] {} iter in {:.2?} → {} ({} samples)",
+        "[wasmtime-runner] {} iter in {:.2?} → {}",
         args.iterations,
         elapsed,
         args.out.display(),
-        sample_count
     );
     if let Some(p) = args.json_out.as_ref() {
         eprintln!("[wasmtime-runner] firefox json → {}", p.display());

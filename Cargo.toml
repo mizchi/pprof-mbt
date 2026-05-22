@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/moonbit-demangle",
+    "crates/firefox-to-pprof",
+    "crates/wasmtime-guest-pprof",
+    "runners/wasmtime-runner",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/mizchi/pprof-mbt"
+
+[workspace.dependencies]
+# Internal crates — version is the workspace version above.
+moonbit-demangle = { path = "crates/moonbit-demangle", version = "0.1.0" }
+firefox-to-pprof = { path = "crates/firefox-to-pprof", version = "0.1.0" }
+wasmtime-guest-pprof = { path = "crates/wasmtime-guest-pprof", version = "0.1.0" }
+
+# Shared third-party deps. Pinned in one place so the runner and the
+# library crates stay in lockstep.
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+flate2 = "1"
+prost = "0.13"
+prost-build = "0.13"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+wasmtime = { version = "44", features = ["profiling"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
