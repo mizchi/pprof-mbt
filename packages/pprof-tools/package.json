@@ -1,7 +1,7 @@
 {
   "name": "@mizchi/pprof-tools",
   "version": "0.1.0",
-  "description": "Convert Firefox Profiler JSON into pprof, with optional MoonBit-specific demangle and wasm host imports. (V8 cpuprofile → pprof has moved to the Rust crate cpuprofile-to-pprof / `moon-pprof cpuprofile2pprof`.)",
+  "description": "Host imports for running MoonBit-compiled wasm-gc / wasm guests under Node. The pprof conversion utilities that used to live here (cpuprofile→pprof, firefox→pprof, MoonBit demangle) moved to the Rust crates `cpuprofile-to-pprof`, `firefox-to-pprof`, `moonbit-demangle`, and are exposed by the `moon-pprof` CLI.",
   "type": "module",
   "license": "Apache-2.0",
   "repository": {
@@ -10,25 +10,17 @@
     "directory": "packages/pprof-tools"
   },
   "keywords": [
-    "pprof",
-    "firefox-profiler",
-    "samply",
-    "wasmtime",
-    "wasm",
     "moonbit",
-    "demangle"
+    "wasm",
+    "wasm-gc",
+    "wasi",
+    "host-imports"
   ],
   "exports": {
-    "./firefox-to-pprof": "./firefox-to-pprof.mjs",
-    "./moonbit/demangle": "./moonbit/demangle.mjs",
     "./moonbit/wasm-host-imports": "./moonbit/wasm-host-imports.mjs"
   },
   "files": [
-    "firefox-to-pprof.mjs",
     "moonbit/",
     "README.md"
-  ],
-  "dependencies": {
-    "pprof-format": "^2.2.1"
-  }
+  ]
 }

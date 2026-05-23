@@ -16,6 +16,7 @@ use clap::{Parser, Subcommand};
 
 mod cmd_bench;
 mod cmd_cpuprofile2pprof;
+mod cmd_firefox2pprof;
 mod cmd_profile;
 mod cmd_summary;
 
@@ -36,6 +37,8 @@ enum Command {
     Bench(cmd_bench::Args),
     /// Convert a Node V8 `.cpuprofile` into gzip'd pprof.
     Cpuprofile2pprof(cmd_cpuprofile2pprof::Args),
+    /// Convert a Firefox Profiler JSON (samply / wasmtime) into gzip'd pprof.
+    Firefox2pprof(cmd_firefox2pprof::Args),
 }
 
 fn main() -> ExitCode {
@@ -64,6 +67,7 @@ fn main() -> ExitCode {
         Command::Summary(a) => cmd_summary::run(a),
         Command::Bench(a) => cmd_bench::run(a),
         Command::Cpuprofile2pprof(a) => cmd_cpuprofile2pprof::run(a),
+        Command::Firefox2pprof(a) => cmd_firefox2pprof::run(a),
     };
 
     match result {

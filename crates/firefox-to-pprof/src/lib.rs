@@ -68,6 +68,8 @@ pub use model::*;
 mod resolver;
 pub use resolver::*;
 
+pub mod samply;
+
 /// Generated pprof protobuf types (`perftools.profiles`). Re-exported so
 /// callers that want to manipulate the raw `Profile` (add labels, attach
 /// extra mappings, …) can do so without depending on `prost` themselves.

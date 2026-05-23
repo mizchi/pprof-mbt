@@ -12,9 +12,10 @@
 - 改善 PR 作成のための **baseline ↔ patched 比較ワークフロー** (`patched-toolchain`
   / `patched-mooncakes` / `moon-pprof bench`)
 
-ですが、**内部ライブラリは MoonBit 非依存にしてある**。`firefox-to-pprof` /
-`wasmtime-guest-pprof` / `@mizchi/pprof-tools` の generic 部分は AssemblyScript /
-Rust / Zig などの wasm にも転用可。[→ 詳細](#汎用-wasm-に転用する)
+ですが、**内部ライブラリは MoonBit 非依存にしてある**。 `firefox-to-pprof` /
+`cpuprofile-to-pprof` / `wasmtime-guest-pprof` の Rust crate 群は
+AssemblyScript / Rust / Zig などの wasm にも転用可。
+[→ 詳細](#汎用-wasm-に転用する)
 
 ## クイックスタート
 
@@ -66,7 +67,7 @@ go tool pprof -http :8000 wasm-gc.pb.gz              # ブラウザで UI
 | `node runners/v8/run-wasm-gc.mjs <wasm>` | wasm-gc を Node V8 で実行 + .cpuprofile 出力 (`--no-profile` で wall time)。 default 経路 (`moon-pprof profile`) で wasmtime に乗らない数値を取りたい時の比較用 |
 | `node runners/v8/run-js.mjs <js>` | js バックエンドを Node V8 で実行 (V8 必須) |
 | `moon-pprof cpuprofile2pprof <in> <out>` | V8 .cpuprofile → pprof gzip (旧 `cpuprofile-to-pprof.mjs` の後継、 Rust 移植) |
-| `node runners/samply-to-pprof.mjs ...` | samply Firefox JSON → pprof |
+| `moon-pprof firefox2pprof <in> <out>` | Firefox Profiler JSON → pprof (`--source samply --syms <sidecar>` で samply の RVA + 旧 `samply-to-pprof.mjs` 相当、 default `--source wasmtime-guest` で 旧 `wasmtime-to-pprof.mjs` 相当) |
 
 ### 典型ワークフロー: 改善 PR を作る
 
@@ -105,8 +106,8 @@ cp -r /tmp/pprof-mbt-mooncakes/bench-x /tmp/pprof-mbt-mooncakes/bench-x.patched
 | `wasm-gc` (default) | wasmtime `GuestProfiler` (Cranelift) | epoch tick sampling | `firefox-to-pprof` crate |
 | `wasm-gc` (`--via-v8`) | Node inspector (V8) | V8 sampling | `v8/cpuprofile-to-pprof.mjs` |
 | `js`      | Node inspector (V8) | V8 sampling | `v8/cpuprofile-to-pprof.mjs` |
-| `wasm`    | wasmtime `GuestProfiler` (Cranelift JIT) | epoch tick sampling | `firefox-to-pprof` crate / `wasmtime-to-pprof.mjs` |
-| `native`  | samply (Mach-O / ELF) | OS sampling | `samply-to-pprof.mjs` |
+| `wasm`    | wasmtime `GuestProfiler` (Cranelift JIT) | epoch tick sampling | `firefox-to-pprof` crate |
+| `native`  | samply (Mach-O / ELF) | OS sampling | `firefox-to-pprof::samply` + `firefox-to-pprof` crate |
 
 どれもマングル名 (`_M0FP26mizchi5bench9ackermann` の類) を pprof に流し、
 共通の demangle で `mizchi::bench::ackermann` に戻す。
@@ -170,8 +171,10 @@ npm run build:native && npm run profile:native
 ```
 
 samply で OS サンプリングプロファイル (Firefox Profiler 形式) を取得。
-`--unstable-presymbolicate` で `.syms.json` サイドカーに OS シンボル情報、
-`samply-to-pprof.mjs` で pprof に変換 (インライン展開含む)。
+`--unstable-presymbolicate` で `.syms.json` サイドカーに OS シンボル情報を出し、
+`moon-pprof firefox2pprof --source samply --syms <sidecar>` で pprof に変換
+(インライン展開含む)。 RVA → enclosing symbol の binary search は
+`firefox-to-pprof::samply::SamplySymsResolver` が担当。
 
 ## ライブラリとして使う
 
@@ -196,20 +199,17 @@ assert_eq!(demangle("_M0FP26mizchi5bench9ackermann"), "mizchi::bench::ackermann"
 ### JavaScript
 
 ```js
-import { writePprofFromFirefox } from "@mizchi/pprof-tools/firefox-to-pprof";
-
-// MoonBit 用
-import { demangle } from "@mizchi/pprof-tools/moonbit/demangle";
 import {
   moonbitWasmImports,
   autoStubMissing,
 } from "@mizchi/pprof-tools/moonbit/wasm-host-imports";
 ```
 
-> V8 `.cpuprofile → pprof` は Rust の `cpuprofile-to-pprof` crate
-> (`moon-pprof cpuprofile2pprof <in> <out>` から CLI で呼べる) に
-> 移管されました。 旧 `@mizchi/pprof-tools/cpuprofile-to-pprof` は
-> 廃止。
+> pprof 変換系 (`cpuprofile-to-pprof` / `firefox-to-pprof` /
+> `moonbit/demangle`) は Rust crate に移管しました。 CLI からは
+> `moon-pprof cpuprofile2pprof` / `moon-pprof firefox2pprof` で
+> 呼べます。 npm 側に残るのは MoonBit wasm を Node V8 で実行する
+> ときの host import (`spectest.print_char` / WASI `fd_write`) のみ。
 
 ## 汎用 wasm に転用する
 
@@ -276,7 +276,7 @@ crates/                                 公開ライブラリ (Rust)
 └── wasmtime-guest-pprof/               wasmtime GuestProfiler 駆動 + pprof (汎用)
 
 packages/                               公開ライブラリ (npm)
-└── pprof-tools/                        @mizchi/pprof-tools (汎用 + moonbit subpath)
+└── pprof-tools/                        @mizchi/pprof-tools (moonbit wasm host imports のみ)
 
 runners/                                CLI / binary
 ├── moon-pprof/                         Rust。統合 CLI
@@ -287,8 +287,8 @@ runners/                                CLI / binary
 │   ├── run-wasm-gc.mjs                 wasm-gc を V8 で実行 (--via-v8)
 │   └── run-js.mjs                      js を V8 で実行
 │                                       (.cpuprofile → pprof は moon-pprof cpuprofile2pprof)
-├── samply-to-pprof.mjs                 samply → pprof
-└── wasmtime-to-pprof.mjs               wasmtime guest JSON → pprof
+                                        (samply / wasmtime guest JSON →
+                                         pprof は moon-pprof firefox2pprof)
 
 bench/                                  MoonBit ベンチ workload (ackermann / fib / mandel)
 bench-async/                            moonbitlang/async 検証用 (coroutine / HTTP server)
