@@ -66,6 +66,10 @@ cp target/release/wasmtime-runner .bin/
 
 # npm workspace は symlink 解決のみ
 npm install
+
+# bash scripts (runners 配下の patched-* / experiment helpers) を .bin/ にコピー
+cp runners/patched-toolchain runners/patched-mooncakes .bin/
+chmod +x .bin/patched-toolchain .bin/patched-mooncakes
 ```
 
 ## ベンチコード
@@ -228,6 +232,7 @@ import { writePprofFromFirefox } from "moonbit-pprof/firefox-to-pprof";
 | `run-js.mjs --no-profile` | 同 js |
 | `.bin/bench-runner` | baseline ↔ patched 自動切替 + markdown 表出力 |
 | `.bin/patched-toolchain` | `~/.moon` snapshot → diff 適用 → 全 target rebundle を 1 コマンドで |
+| `.bin/patched-mooncakes` | 各プロジェクトの `.mooncakes/<dep>/` snapshot → diff 適用 → restore (registry dep 用) |
 | `.bin/pprof-summary` | `Memory-management self time` rollup を含む top-N 表示 |
 
 PR-1 (bigint factorial 3×) の再現:
@@ -237,6 +242,23 @@ PR-1 (bigint factorial 3×) の再現:
 .bin/patched-toolchain apply notes/pr-drafts/01-bigint-mul-single-limb/patch.diff
 .bin/patched-toolchain rebundle
 .bin/bench-runner --workloads bigint_ops,bigint_square --runs 3
+```
+
+`moonbitlang/x` PR-04 (uuid `to_string` -64%) の再現:
+
+```sh
+.bin/patched-mooncakes init bench-x
+# baseline 計測
+( cd bench-x && moon build --target native --release )
+time bench-x/_build/native/release/build/cmd/uuid_parse/uuid_parse.exe
+
+.bin/patched-mooncakes apply bench-x moonbitlang/x \
+  notes/x-pr-drafts/04-uuid-tostring-inplace/patch.diff
+# patched 計測
+( cd bench-x && moon build --target native --release )
+time bench-x/_build/native/release/build/cmd/uuid_parse/uuid_parse.exe
+
+.bin/patched-mooncakes restore bench-x       # baseline に戻す
 ```
 
 ## 制約 / 既知の TODO

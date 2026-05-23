@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+# patched-mooncakes: snapshot a project's .mooncakes/ to a writable scratch
+# dir, apply registry-dep diffs, and provide restore. The patched state
+# lives in-place at <bench-dir>/.mooncakes/; the scratch dir only holds
+# the baseline copy so `restore` can revert.
+#
+# Parallel to runners/patched-toolchain, but for per-project registry
+# dependencies (moonbitlang/x, moonbitlang/async, ...) instead of core.
+#
+# Usage:
+#   patched-mooncakes init <bench-dir>
+#       Snapshot <bench-dir>/.mooncakes/ to /tmp/pprof-mbt-mooncakes/<name>/.
+#       Idempotent: refuses to overwrite an existing snapshot.
+#
+#   patched-mooncakes apply <bench-dir> <pkg> <diff>...
+#       Apply diff(s) to <bench-dir>/.mooncakes/<pkg>/ in place. Diffs must
+#       be in `a/<path>` / `b/<path>` form relative to the package root
+#       (i.e. `git format-patch` style). `pkg` is the registry path,
+#       e.g. `moonbitlang/x`.
+#
+#   patched-mooncakes status <bench-dir>
+#       diff -rq between the snapshot and the live <bench-dir>/.mooncakes/.
+#
+#   patched-mooncakes restore <bench-dir>
+#       Copy snapshot back into <bench-dir>/.mooncakes/ (revert to baseline).
+#       Use this between baseline / patched measurement runs.
+#
+#   patched-mooncakes reset <bench-dir>
+#       Remove the /tmp snapshot. Doesn't touch the live .mooncakes/.
+
+set -euo pipefail
+
+SCRATCH_ROOT="${MOONCAKES_SCRATCH:-/tmp/pprof-mbt-mooncakes}"
+
+usage() {
+  cat <<EOF
+usage: patched-mooncakes <command> [args]
+
+commands:
+  init    <bench-dir>                       Snapshot <bench-dir>/.mooncakes to scratch
+  apply   <bench-dir> <pkg> <diff>...       Apply diff(s) to .mooncakes/<pkg>
+  status  <bench-dir>                       diff -rq snapshot vs live
+  restore <bench-dir>                       Copy snapshot back -> live (revert to baseline)
+  reset   <bench-dir>                       rm -rf the scratch snapshot
+
+env vars:
+  MOONCAKES_SCRATCH   Override scratch root (default: /tmp/pprof-mbt-mooncakes)
+EOF
+}
+
+bench_dir_ok() {
+  if [ -z "${1:-}" ]; then
+    echo "patched-mooncakes: bench-dir is required" >&2
+    exit 1
+  fi
+  if [ ! -d "$1/.mooncakes" ]; then
+    echo "patched-mooncakes: $1/.mooncakes not found (run \`moon build\` first?)" >&2
+    exit 1
+  fi
+}
+
+snapshot_dir() {
+  local bench=$1
+  echo "$SCRATCH_ROOT/$(basename "$bench")"
+}
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+  init)
+    bench=${1:-}
+    bench_dir_ok "$bench"
+    snap=$(snapshot_dir "$bench")
+    if [ -d "$snap" ]; then
+      echo "patched-mooncakes: $snap already exists; use 'reset' first to overwrite" >&2
+      exit 1
+    fi
+    mkdir -p "$SCRATCH_ROOT"
+    cp -r "$bench/.mooncakes" "$snap"
+    chmod -R u+w "$snap"
+    echo "patched-mooncakes: snapshot $bench/.mooncakes -> $snap"
+    ;;
+  apply)
+    bench=${1:-}; shift || true
+    pkg=${1:-}; shift || true
+    bench_dir_ok "$bench"
+    if [ -z "$pkg" ]; then
+      echo "patched-mooncakes: apply needs <pkg> (e.g. moonbitlang/x)" >&2
+      exit 1
+    fi
+    target="$bench/.mooncakes/$pkg"
+    if [ ! -d "$target" ]; then
+      echo "patched-mooncakes: $target not found" >&2
+      exit 1
+    fi
+    if [ $# -eq 0 ]; then
+      echo "patched-mooncakes: apply needs at least one diff" >&2
+      exit 1
+    fi
+    snap=$(snapshot_dir "$bench")
+    if [ ! -d "$snap" ]; then
+      echo "patched-mooncakes: no snapshot for $bench (run 'init' first)" >&2
+      exit 1
+    fi
+    for d in "$@"; do
+      abs=$(realpath "$d")
+      echo "==> applying $d to $pkg"
+      (cd "$target" && patch -p1 < "$abs")
+    done
+    ;;
+  status)
+    bench=${1:-}
+    bench_dir_ok "$bench"
+    snap=$(snapshot_dir "$bench")
+    if [ ! -d "$snap" ]; then
+      echo "patched-mooncakes: no snapshot for $bench (run 'init' first)" >&2
+      exit 1
+    fi
+    out=$(diff -rq "$snap" "$bench/.mooncakes" 2>/dev/null | grep -v '/_build\b' || true)
+    if [ -z "$out" ]; then
+      echo "(no differences vs snapshot)"
+    else
+      echo "$out"
+    fi
+    ;;
+  restore)
+    bench=${1:-}
+    bench_dir_ok "$bench"
+    snap=$(snapshot_dir "$bench")
+    if [ ! -d "$snap" ]; then
+      echo "patched-mooncakes: no snapshot for $bench (run 'init' first)" >&2
+      exit 1
+    fi
+    rm -rf "$bench/.mooncakes"
+    cp -r "$snap" "$bench/.mooncakes"
+    echo "patched-mooncakes: restored $bench/.mooncakes from $snap"
+    ;;
+  reset)
+    bench=${1:-}
+    if [ -z "$bench" ]; then
+      echo "patched-mooncakes: reset needs <bench-dir>" >&2
+      exit 1
+    fi
+    snap=$(snapshot_dir "$bench")
+    rm -rf "$snap"
+    echo "patched-mooncakes: removed $snap"
+    ;;
+  ""|-h|--help|help)
+    usage
+    ;;
+  *)
+    echo "patched-mooncakes: unknown command '$cmd'" >&2
+    usage >&2
+    exit 1
+    ;;
+esac
