@@ -212,17 +212,136 @@ self-time % が見えていても、それは "プロファイラがその symbo
 止まっただけ" でコンパイラがインライン後の coalesced 命令を
 カウントしていただけ、というケース。
 
+## 実験 5: json `lex_number_end` の二度走査を排除
+
+**動機**: `scan_json_number` は数値の桁を 1 度走査して `mantissa` /
+`exponent` を計算済み。整数経路に分岐するとさらに `lex_integer_end` が
+**同じ桁を再走査して Int64 acc を組む**。mantissa が safe-int 範囲なら
+そのまま使えるはず。
+
+**実装** (`notes/json_skip_double_scan.diff`, 17 行):
+
+```moonbit
+if scan.is_integer {
+  if !scan.many_digits && scan.mantissa <= SAFE_INTEGER_LIMIT.reinterpret_as_uint64() {
+    let v = scan.mantissa.reinterpret_as_int64()
+    let signed = if scan.negative { -v } else { v }
+    return (signed.to_double(), None)
+  }
+  return ctx.lex_integer_end(start, end)
+}
+```
+
+**結果** — **modest win on wasm-gc**:
+
+| | baseline | patched | delta |
+|---|--:|--:|--:|
+| wasm | 664 | 662 | -0.3% (誤差) |
+| wasm-gc | 189 | 175 | **-7.5%** |
+| js | 295 | 284 | -3.7% |
+| native | 131 | 126 | -3.8% |
+
+bench 入力 1 オブジェクトに整数 4 個 × 1000 obj × 50 iter = 20 万回
+fast-path にヒット。wasm では mem-mgmt overhead が支配しているので
+algorithmic gain が薄まる。6503/6503 tests pass。
+
+## 実験 6: immut/sorted_map `make_tree` の `length()` 呼び出しを inline
+
+**動機**: `make_tree` は `l.length() + r.length() + 1` で size を計算。
+`length()` 自体は `match` 1 個だけだが、`make_tree` が merge/balance
+ループ内で大量に呼ばれるので、関数呼び出しを潰したい。
+
+**実装** (`notes/sorted_map_make_tree.diff`, 30 行): `make_tree` 内に
+`length()` の中身を直接展開 + `#inline` 注釈。
+
+```moonbit
+#inline
+fn[K, V] make_tree(key, value, l, r) {
+  let ls = match l { Empty => 0; Tree(_, size=s, _, _, ..) => s }
+  let rs = match r { Empty => 0; Tree(_, size=s, _, _, ..) => s }
+  Tree(key, value~, size=ls + rs + 1, l, r)
+}
+```
+
+**結果**:
+
+| | baseline | patched | delta |
+|---|--:|--:|--:|
+| wasm | 128 | 111 | **-13%** |
+| wasm-gc | 43 | 39 | -9% |
+| js | 58 | 54 | -7% |
+| native | 25 | 24 | -4% |
+
+wasm が一番効くのは、関数呼び出しを潰すと wasm の関数 prolog/epilog
+オーバーヘッド (引数 box / unbox / refcount) が消えるため。
+6503/6503 tests pass。
+
+## 実験 7: HashMap grow の rehash 専用パス
+
+**動機**: 通常 `set_with_hash` は Robin Hood probe + key equality + 
+load-factor check を含む。**grow 中の rehash では全て無駄**:
+- 元 entries はすべて unique key (equality 比較は永遠に false)
+- size が変わらず capacity が 2 倍 → load-factor check も永遠に false
+
+**実装** (`notes/hashmap_grow_specialized.diff`, 46 行): grow 内の
+ループから `set_with_hash` 呼び出しを除き、Robin Hood swap だけの
+専用 probe を直接展開。
+
+```moonbit
+fn[K, V] HashMap::grow(self) -> Unit {  // 注: Eq 制約も外せる
+  ...
+  for entry in old_entries {
+    if entry is Some(e) {
+      let hash = e.hash
+      for psl = 0, idx = hash & new_mask, ent = e {
+        match self.entries[idx] {
+          None => { ent.psl = psl; self.entries[idx] = Some(ent); break }
+          Some(curr) =>
+            if psl > curr.psl {
+              ent.psl = psl; self.entries[idx] = Some(ent)
+              continue curr.psl + 1, (idx + 1) & new_mask, curr
+            } else {
+              continue psl + 1, (idx + 1) & new_mask, ent
+            }
+        }
+      }
+    }
+  }
+}
+```
+
+**結果** — **全 target で -17〜19% (クリーン勝利)**:
+
+| | baseline (median) | patched (median) | delta |
+|---|--:|--:|--:|
+| wasm | 318 ms | 257 ms | **-19.2%** |
+| wasm-gc | 100 ms | 81 ms | **-19.0%** |
+| js | 136 ms | 112 ms | **-17.6%** |
+| native | 84 ms | 70 ms | **-16.7%** |
+
+bench (`hashmap_ops`) は 10k key 投入なので grow が ~11 回走る。
+通常 path だと毎 grow で全 entries が full probe を回るが、
+専用 path は equality + load check を省ける分軽い。出力
+`sum=-1795217296` 一致、6503/6503 tests pass。
+
 ## まとめ
 
-| 実験 | 想定 | 実測 | 結論 |
-|---|---|---|---|
-| PQ binary heap | merges 51% を消す | wasm-gc +135% (退行) | **却下**。pairing heap が moonbit ランタイムでは constant factor 勝ち |
-| deque bitmask | mod の自己 3.5% を 0 に | 全 target -8〜24% | **採用候補だが capacity API 契約変更要** |
-| **bigint n×1 fast path** | factorial の主乗算を特化 | **全 (非-js) target で 3.4×** | **採用**。テスト全 pass、48 行の diff |
-| Hasher #inline | 11% の関数呼び出しを潰す | -0〜7% (誤差) | **無効**。moonc が既に inline 済み |
+| # | 実験 | wasm | wasm-gc | js | native | テスト | 採否 |
+|---|---|--:|--:|--:|--:|:--:|:--:|
+| 1 | PQ pairing → binary heap | (改善?) | **+135%** | +180% | +24% | n/a | ❌ 退行 |
+| 2 | deque mod → bitmask | -8.5% | -20.6% | -19.3% | -24.1% | **24 fail** | ⚠️ API 衝突 |
+| 3 | **bigint n×1 fast path** | **-66%** | **-71%** | noise | **-70%** | ✅ | ✅ 採用 |
+| 4 | Hasher chain `#inline` | -3.6% | 0 | -2% | -7% | ✅ | ❌ 誤差 |
+| 5 | json safe-int 二度走査排除 | noise | -7.5% | -3.7% | -3.8% | ✅ | ✅ 小 |
+| 6 | sorted_map make_tree inline | **-13%** | -9% | -7% | -4% | ✅ | ✅ 中 |
+| 7 | **hashmap grow 専用 rehash** | **-19%** | **-19%** | **-18%** | **-17%** | ✅ | ✅ 採用 |
 
-`notes/bigint_mul_single_limb.diff` と `notes/deque_bitmask.diff` に
-実 diff を置いた。bigint のはそのまま upstream PR にできる規模。
+`notes/*.diff` に実 diff を置いた:
+- `bigint_mul_single_limb.diff` (48 行) — PR ready
+- `hashmap_grow_specialized.diff` (46 行) — PR ready
+- `sorted_map_make_tree.diff` (30 行) — PR ready
+- `json_skip_double_scan.diff` (17 行) — PR ready
+- `deque_bitmask.diff` (100 行) — API 議論が要る
 
 ## 教訓
 
@@ -233,9 +352,32 @@ self-time % が見えていても、それは "プロファイラがその symbo
   ので、教科書アルゴリズムの選択基準が変わる。
 - 「ワークロードに合わせた **specialization** が最強」: bigint の通り。
   汎用 grade_school_mul を捨てずに、よく出る n×1 だけ別経路にする。
-  factorial のような chain は片方が必ず小さいので 3× 効く。
+  factorial のような chain は片方が必ず小さいので 3× 効く。同じ発想で
+  hashmap の grow 中 rehash も「unique key + load 余裕」を前提に
+  専用 path を書けば 17〜19% 縮む。
 - 「`#inline` を足しても誤差」: moonc は十分 aggressive に inline
   している。「インライン化されていない関数呼び出しが見える」のは
   プロファイラの解像度の問題で、実際は inline 済みのケースが多い。
+  **ただし関数呼び出しを完全に潰す (関数の中身を呼び出し側に直接展開)
+  と効くケースはある**: sorted_map の make_tree で確認 (-13% wasm)。
+- 「algorithm 系の小細工は wasm-gc / native で素直に効く。wasm
+  (mem-mgmt 60%+) では効果が薄まる」: json 二度走査排除が典型例。
 - 同じ計測 session 内で baseline と patched を切り替えて比べないと、
   system load の揺らぎで delta が読めない。
+
+## 累積効果の見積もり (推定)
+
+各パッチは異なる workload に効くので、bench スイート全体に並列適用
+した場合の改善は workload 別に独立に得られるはず:
+
+| workload    | 適用パッチ        | 期待 delta (wasm-gc) |
+|-------------|-------------------|--:|
+| bigint_ops  | bigint mul_single | **-71%** |
+| hashmap_ops | hashmap grow      | **-19%** |
+| sorted_map_merge | sorted_map make_tree | -9% |
+| json_parse  | json safe-int     | -7% |
+| deque_ops   | (未適用、API 議論) | (-21%) |
+| pq_ops, regex_match, main | 該当パッチなし | 0 |
+
+つまり 5 つを landing できれば、現在の bench スイートで **wasm-gc 平均
+-15% 級** の改善が見込める。bigint と hashmap が特に大きい。
