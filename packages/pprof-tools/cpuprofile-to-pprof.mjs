@@ -9,7 +9,7 @@
 // `count` and `nanoseconds` values.
 //
 // Function names go through a caller-supplied demangler — defaults to
-// `moonbit-pprof/demangle`. Pass an identity function (`s => s`) when
+// `@mizchi/pprof-tools/moonbit/demangle`. Pass an identity function (`s => s`) when
 // profiling non-MoonBit code.
 
 import { gzipSync } from "node:zlib";
@@ -23,7 +23,7 @@ import {
   ValueType,
   StringTable,
 } from "pprof-format";
-import { demangle as defaultDemangle } from "./demangle.mjs";
+import { demangle as defaultDemangle } from "./moonbit/demangle.mjs";
 
 /**
  * @typedef {Object} ConvertOptions

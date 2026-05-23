@@ -7,7 +7,7 @@
 中身は実験プロジェクト + 2 言語のライブラリ群:
 
 - **Rust crates** — `moonbit-demangle`, `firefox-to-pprof`, `wasmtime-guest-pprof`
-- **npm package** — `moonbit-pprof` (subpath exports: `./demangle`, `./cpuprofile-to-pprof`, `./firefox-to-pprof`)
+- **npm package** — `@mizchi/pprof-tools` (`./cpuprofile-to-pprof`, `./firefox-to-pprof`, `./moonbit/demangle`, `./moonbit/wasm-host-imports`)
 
 これらは MoonBit を扱う他のツールから個別に再利用できる形にしてある。
 
@@ -23,7 +23,7 @@ crates/                                 公開ライブラリ (Rust)
 └── wasmtime-guest-pprof/               wasmtime GuestProfiler 駆動 + pprof
 
 packages/                               公開ライブラリ (npm)
-└── moonbit-pprof/                      demangle / cpuprofile / firefox subpath exports
+└── pprof-tools/                        @mizchi/pprof-tools (subpath exports: 汎用 + moonbit)
 
 runners/                                CLI / binary
 ├── wasmtime-runner/                    Rust。wasm を wasmtime + GuestProfiler で実行 + pprof 化
@@ -91,7 +91,7 @@ go tool pprof -http :8000 wasm-gc.pb.gz
 - `runners/run-wasm-gc.mjs` が `spectest.print_char` import を提供して
   wasm を Node で実行、inspector の `Profiler.start`/`Profiler.stop` で
   V8 CPU profile (.cpuprofile) を取得。
-- `runners/cpuprofile-to-pprof.mjs` (= `moonbit-pprof/cpuprofile-to-pprof`)
+- `runners/cpuprofile-to-pprof.mjs` (= `@mizchi/pprof-tools/cpuprofile-to-pprof`)
   が .cpuprofile → pprof protobuf に変換しつつ demangle。
 
 ### js (Node)
@@ -171,10 +171,12 @@ assert_eq!(demangle("_M0FP26mizchi5bench9ackermann"), "mizchi::bench::ackermann"
 ### JavaScript
 
 ```js
-// package.json: "dependencies": { "moonbit-pprof": "^0.1" }
-import { demangle } from "moonbit-pprof/demangle";
-import { convert } from "moonbit-pprof/cpuprofile-to-pprof";
-import { writePprofFromFirefox } from "moonbit-pprof/firefox-to-pprof";
+// package.json: "dependencies": { "@mizchi/pprof-tools": "^0.1" }
+import { convert } from "@mizchi/pprof-tools/cpuprofile-to-pprof";
+import { writePprofFromFirefox } from "@mizchi/pprof-tools/firefox-to-pprof";
+// MoonBit-specific helpers:
+import { demangle } from "@mizchi/pprof-tools/moonbit/demangle";
+import { moonbitWasmImports } from "@mizchi/pprof-tools/moonbit/wasm-host-imports";
 ```
 
 ## 調査ログ / upstream 向け patches

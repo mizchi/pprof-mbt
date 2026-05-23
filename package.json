@@ -17,6 +17,6 @@
     "profile:native": "samply record --save-only --unstable-presymbolicate -o native-samply.json.gz --no-open -- bench/_build/native/release/build/cmd/main/main.exe && node runners/samply-to-pprof.mjs native-samply.json.gz native-samply.json.syms.json native.pb.gz"
   },
   "devDependencies": {
-    "moonbit-pprof": "*"
+    "@mizchi/pprof-tools": "*"
   }
 }

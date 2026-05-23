@@ -21,7 +21,7 @@ import {
   ValueType,
   StringTable,
 } from "pprof-format";
-import { demangle as defaultDemangle } from "./demangle.mjs";
+import { demangle as defaultDemangle } from "./moonbit/demangle.mjs";
 
 /**
  * @typedef {Object} ResolvedFrame
@@ -47,7 +47,7 @@ import { demangle as defaultDemangle } from "./demangle.mjs";
  * @param {(thread, sampleIdx) => ResolvedSample} options.resolveSample
  *   Translates one Firefox sample into a pprof sample value.
  * @param {(name: string) => string} [options.demangle] - Defaults to the
- *   moonbit demangler in ./demangle.mjs.
+ *   moonbit demangler in ./moonbit/demangle.mjs.
  * @param {string} [options.label]           - Prefix for the console summary.
  * @returns {Buffer}  gzip'd pprof protobuf.
  */

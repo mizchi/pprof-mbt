@@ -1,0 +1,38 @@
+{
+  "name": "@mizchi/pprof-tools",
+  "version": "0.1.0",
+  "description": "Convert V8 cpuprofile / Firefox Profiler JSON into pprof, with optional MoonBit-specific demangle and wasm host imports.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mizchi/pprof-mbt.git",
+    "directory": "packages/pprof-tools"
+  },
+  "keywords": [
+    "pprof",
+    "v8",
+    "cpuprofile",
+    "firefox-profiler",
+    "samply",
+    "wasmtime",
+    "wasm",
+    "moonbit",
+    "demangle"
+  ],
+  "exports": {
+    "./cpuprofile-to-pprof": "./cpuprofile-to-pprof.mjs",
+    "./firefox-to-pprof": "./firefox-to-pprof.mjs",
+    "./moonbit/demangle": "./moonbit/demangle.mjs",
+    "./moonbit/wasm-host-imports": "./moonbit/wasm-host-imports.mjs"
+  },
+  "files": [
+    "cpuprofile-to-pprof.mjs",
+    "firefox-to-pprof.mjs",
+    "moonbit/",
+    "README.md"
+  ],
+  "dependencies": {
+    "pprof-format": "^2.2.1"
+  }
+}

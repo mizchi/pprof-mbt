@@ -4,7 +4,7 @@
 // overhead.
 //
 // The host imports themselves live in
-// `moonbit-pprof/wasm-host-imports` so non-moonbit consumers can swap
+// `@mizchi/pprof-tools/moonbit/wasm-host-imports` so non-moonbit consumers can swap
 // in their own.
 
 import { readFileSync, writeFileSync } from "node:fs";
@@ -13,7 +13,7 @@ import { argv } from "node:process";
 import {
   moonbitWasmImports,
   autoStubMissing,
-} from "moonbit-pprof/wasm-host-imports";
+} from "@mizchi/pprof-tools/moonbit/wasm-host-imports";
 
 // Strip --no-profile from argv first so positional indices stay stable.
 const positional = argv.slice(2).filter((a) => a !== "--no-profile");
