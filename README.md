@@ -63,9 +63,9 @@ go tool pprof -http :8000 wasm-gc.pb.gz              # ブラウザで UI
 | `patched-toolchain` | `~/.moon` を `/tmp` に snapshot → diff 適用 → 全 backend rebundle (core PR 用) |
 | `patched-mooncakes` | `<bench-dir>/.mooncakes/` を `/tmp` に snapshot → restore (registry dep PR 用) |
 | `http-baseline-server` | port 30003 で空ハンドラ HTTP (axum)、k6 比較の baseline 用 |
-| `node runners/run-wasm-gc.mjs <wasm>` | wasm-gc を Node V8 で実行 + .cpuprofile 出力 (`--no-profile` で wall time) |
-| `node runners/run-js.mjs <js>` | 同 js |
-| `node runners/cpuprofile-to-pprof.mjs <in> <out>` | V8 .cpuprofile → pprof gzip |
+| `node runners/v8/run-wasm-gc.mjs <wasm>` | wasm-gc を Node V8 で実行 + .cpuprofile 出力 (`--no-profile` で wall time)。 default 経路 (`moon-pprof profile`) で wasmtime に乗らない数値を取りたい時の比較用 |
+| `node runners/v8/run-js.mjs <js>` | js バックエンドを Node V8 で実行 (V8 必須) |
+| `node runners/v8/cpuprofile-to-pprof.mjs <in> <out>` | V8 .cpuprofile → pprof gzip |
 | `node runners/samply-to-pprof.mjs ...` | samply Firefox JSON → pprof |
 
 ### 典型ワークフロー: 改善 PR を作る
@@ -103,8 +103,8 @@ cp -r /tmp/pprof-mbt-mooncakes/bench-x /tmp/pprof-mbt-mooncakes/bench-x.patched
 | backend | profile source | サンプル方式 | pprof 化 |
 |---------|---------------|---------|---------|
 | `wasm-gc` (default) | wasmtime `GuestProfiler` (Cranelift) | epoch tick sampling | `firefox-to-pprof` crate |
-| `wasm-gc` (`--via-v8`) | Node inspector (V8) | V8 sampling | `cpuprofile-to-pprof.mjs` |
-| `js`      | Node inspector (V8) | V8 sampling | `cpuprofile-to-pprof.mjs` |
+| `wasm-gc` (`--via-v8`) | Node inspector (V8) | V8 sampling | `v8/cpuprofile-to-pprof.mjs` |
+| `js`      | Node inspector (V8) | V8 sampling | `v8/cpuprofile-to-pprof.mjs` |
 | `wasm`    | wasmtime `GuestProfiler` (Cranelift JIT) | epoch tick sampling | `firefox-to-pprof` crate / `wasmtime-to-pprof.mjs` |
 | `native`  | samply (Mach-O / ELF) | OS sampling | `samply-to-pprof.mjs` |
 
@@ -266,8 +266,10 @@ runners/                                CLI / binary
 ├── http-baseline-server/               Rust (axum + tokio)。k6 比較の baseline
 ├── patched-toolchain                   bash。~/.moon snapshot / patch / rebundle
 ├── patched-mooncakes                   bash。.mooncakes/ snapshot / patch / restore
-├── run-wasm-gc.mjs / run-js.mjs        Node V8 inspector ラッパー
-├── cpuprofile-to-pprof.mjs             V8 .cpuprofile → pprof
+├── v8/                                 Node V8 inspector 経由の経路
+│   ├── run-wasm-gc.mjs                 wasm-gc を V8 で実行 (--via-v8)
+│   ├── run-js.mjs                      js を V8 で実行
+│   └── cpuprofile-to-pprof.mjs         V8 .cpuprofile → pprof
 ├── samply-to-pprof.mjs                 samply → pprof
 └── wasmtime-to-pprof.mjs               wasmtime guest JSON → pprof
 

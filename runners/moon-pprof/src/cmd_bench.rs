@@ -42,7 +42,7 @@ pub struct Args {
     #[arg(long, default_value = "./bench")]
     pub bench_dir: String,
 
-    /// Path to runners (run-wasm-gc.mjs etc)
+    /// Path to the runners dir; V8 scripts live under `<runner_dir>/v8/`
     #[arg(long, default_value = "./runners")]
     pub runner_dir: String,
 
@@ -62,7 +62,7 @@ pub struct Args {
     #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
     pub build: bool,
 
-    /// Run wasm-gc benches through Node V8 (`runners/run-wasm-gc.mjs`)
+    /// Run wasm-gc benches through Node V8 (`runners/v8/run-wasm-gc.mjs`)
     /// instead of the default wasmtime + GuestProfiler path. Useful for
     /// reproducing V8-side numbers; the wasmtime path gives denser
     /// sampling and is the default.
@@ -281,148 +281,98 @@ fn self_path() -> Result<PathBuf> {
     env::current_exe().context("locating moon-pprof binary path")
 }
 
-fn run_wasm(args: &Args, w: &str) -> Result<f64> {
-    let path = PathBuf::from(&args.bench_dir)
+fn artifact_path(args: &Args, backend_dir: &str, w: &str, ext: &str) -> PathBuf {
+    PathBuf::from(&args.bench_dir)
         .join("_build")
-        .join("wasm")
+        .join(backend_dir)
         .join("release")
         .join("build")
         .join("cmd")
         .join(w)
-        .join(format!("{}.wasm", w));
+        .join(format!("{}.{}", w, ext))
+}
+
+fn combined_output(out: &std::process::Output) -> String {
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    )
+}
+
+/// Spawn a wall-time-only walker (`moon-pprof profile --no-profile`)
+/// against a wasm binary. Used for both `wasm` and `wasm-gc` backends —
+/// wasm-gc is enabled on the wasmtime engine unconditionally.
+fn spawn_self_walltime(wasm: &Path, label: &str) -> Result<f64> {
     let bin = self_path()?;
     let out = Command::new(&bin)
         .args(["profile", "--no-profile"])
-        .arg(&path)
+        .arg(wasm)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()?;
     if !out.status.success() {
         bail!(
-            "moon-pprof profile {:?}: {}\n{}{}",
-            path,
+            "moon-pprof profile ({}) {:?}: {}\n{}",
+            label,
+            wasm,
             out.status,
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
+            combined_output(&out)
         );
     }
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    parse_ms(&combined)
+    parse_ms(&combined_output(&out))
 }
 
-fn wasm_gc_path(args: &Args, w: &str) -> PathBuf {
-    PathBuf::from(&args.bench_dir)
-        .join("_build")
-        .join("wasm-gc")
-        .join("release")
-        .join("build")
-        .join("cmd")
-        .join(w)
-        .join(format!("{}.wasm", w))
-}
-
-/// Default wasm-gc path: spawn `moon-pprof profile --no-profile --wasm-gc`
-/// (wasmtime + Cranelift). No Node dependency.
-fn run_wasm_gc(args: &Args, w: &str) -> Result<f64> {
-    let path = wasm_gc_path(args, w);
-    let bin = self_path()?;
-    let out = Command::new(&bin)
-        .args(["profile", "--no-profile", "--wasm-gc"])
-        .arg(&path)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()?;
-    if !out.status.success() {
-        bail!(
-            "moon-pprof profile --wasm-gc {:?}: {}\n{}{}",
-            path,
-            out.status,
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
-    }
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    parse_ms(&combined)
-}
-
-/// Legacy wasm-gc path: spawn Node `runners/run-wasm-gc.mjs --no-profile`
-/// (V8). Kept behind --wasm-gc-via-v8 for reproducing V8-side numbers.
-fn run_wasm_gc_v8(args: &Args, w: &str) -> Result<f64> {
-    let path = wasm_gc_path(args, w);
-    let script = PathBuf::from(&args.runner_dir).join("run-wasm-gc.mjs");
+/// Spawn a Node runner script (v8/run-wasm-gc.mjs / v8/run-js.mjs) in
+/// wall-time-only mode.
+fn spawn_node_walltime(script: &Path, target: &Path, label: &str) -> Result<f64> {
     let out = Command::new("node")
-        .arg(&script)
+        .arg(script)
         .arg("--no-profile")
-        .arg(&path)
+        .arg(target)
         .output()?;
     if !out.status.success() {
         bail!(
-            "run-wasm-gc {:?}: {}\n{}{}",
-            path,
+            "{} {:?}: {}\n{}",
+            label,
+            target,
             out.status,
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
+            combined_output(&out)
         );
     }
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    parse_ms(&combined)
+    parse_ms(&combined_output(&out))
+}
+
+fn run_wasm(args: &Args, w: &str) -> Result<f64> {
+    let path = artifact_path(args, "wasm", w, "wasm");
+    spawn_self_walltime(&path, "wasm")
+}
+
+/// Default wasm-gc path: wasmtime + Cranelift via the in-process binary.
+/// No Node dependency.
+fn run_wasm_gc(args: &Args, w: &str) -> Result<f64> {
+    let path = artifact_path(args, "wasm-gc", w, "wasm");
+    spawn_self_walltime(&path, "wasm-gc")
+}
+
+/// Legacy wasm-gc path: spawn Node `runners/v8/run-wasm-gc.mjs --no-profile`.
+/// Kept behind --wasm-gc-via-v8 for reproducing V8-side numbers.
+fn run_wasm_gc_v8(args: &Args, w: &str) -> Result<f64> {
+    let path = artifact_path(args, "wasm-gc", w, "wasm");
+    let script = PathBuf::from(&args.runner_dir).join("v8").join("run-wasm-gc.mjs");
+    spawn_node_walltime(&script, &path, "run-wasm-gc")
 }
 
 fn run_js(args: &Args, w: &str) -> Result<f64> {
-    let path = PathBuf::from(&args.bench_dir)
-        .join("_build")
-        .join("js")
-        .join("release")
-        .join("build")
-        .join("cmd")
-        .join(w)
-        .join(format!("{}.js", w))
+    let path = artifact_path(args, "js", w, "js")
         .canonicalize()
         .with_context(|| format!("canonicalize js path for {}", w))?;
-    let script = PathBuf::from(&args.runner_dir).join("run-js.mjs");
-    let out = Command::new("node")
-        .arg(&script)
-        .arg("--no-profile")
-        .arg(&path)
-        .output()?;
-    if !out.status.success() {
-        bail!(
-            "run-js {:?}: {}\n{}{}",
-            path,
-            out.status,
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
-    }
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    parse_ms(&combined)
+    let script = PathBuf::from(&args.runner_dir).join("v8").join("run-js.mjs");
+    spawn_node_walltime(&script, &path, "run-js")
 }
 
 fn run_native(args: &Args, w: &str) -> Result<f64> {
-    let bin = PathBuf::from(&args.bench_dir)
-        .join("_build")
-        .join("native")
-        .join("release")
-        .join("build")
-        .join("cmd")
-        .join(w)
-        .join(format!("{}.exe", w));
+    let bin = artifact_path(args, "native", w, "exe");
     let start = Instant::now();
     let status = Command::new(&bin).stdout(Stdio::null()).stderr(Stdio::null()).status()?;
     if !status.success() {
