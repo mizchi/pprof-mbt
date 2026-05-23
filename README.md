@@ -233,7 +233,7 @@ import { writePprofFromFirefox } from "moonbit-pprof/firefox-to-pprof";
 | `.bin/bench-runner` | baseline ↔ patched 自動切替 + markdown 表出力 |
 | `.bin/patched-toolchain` | `~/.moon` snapshot → diff 適用 → 全 target rebundle を 1 コマンドで |
 | `.bin/patched-mooncakes` | 各プロジェクトの `.mooncakes/<dep>/` snapshot → diff 適用 → restore (registry dep 用) |
-| `.bin/pprof-summary` | `Memory-management self time` rollup を含む top-N 表示 |
+| `.bin/pprof-summary` | `Memory-management self time` rollup を含む top-N 表示 (`--diff base patched` で改善/退行 diff も) |
 
 PR-1 (bigint factorial 3×) の再現:
 
