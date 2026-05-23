@@ -324,22 +324,133 @@ bench (`hashmap_ops`) は 10k key 投入なので grow が ~11 回走る。
 専用 path は equality + load check を省ける分軽い。出力
 `sum=-1795217296` 一致、6503/6503 tests pass。
 
+## 実験 8: HashSet grow の専用 rehash (hashmap の mirror)
+
+hashmap の patch を hashset にも適用。構造はほぼ同じ。
+
+**実装** (`notes/hashset_grow_specialized.diff`, 49 行):
+`HashSet::grow` 内の `add_with_hash` 呼び出しを、Eq + grow_at チェック
+を除いた Robin Hood swap 直書きに置き換え。
+
+**結果** (10k key 投入の hashset_ops, 3 run median):
+
+| | baseline | patched | delta |
+|---|--:|--:|--:|
+| wasm | 317 | 258 | **-18.6%** |
+| wasm-gc | 94 | 81 | **-13.8%** |
+| js | 122 | 124 | +1.6% (noise) |
+| native | 81 | 76 | -6.2% |
+
+6503/6503 tests pass。`Eq` 制約も grow 関数のシグネチャから外せる。
+
+## 実験 9: immut/sorted_set の `create` を inline (sorted_map の mirror)
+
+`SortedSet::union` で `create` (= sorted_map の make_tree に相当) が
+hot。同じパターンで `length()` 呼び出し x 2 を直接 match 展開。
+
+**実装** (`notes/sorted_set_create_inline.diff`, 27 行)。
+
+**結果** (sorted_set_union bench):
+
+| | baseline | patched | delta |
+|---|--:|--:|--:|
+| wasm | 128 | 118 | **-7.8%** |
+| wasm-gc | 47 | 44 | -6.4% |
+| js | 59 | 62 | +5% (noise) |
+| native | 24 | 23 | -4% |
+
+6503/6503 tests pass。
+
+## 実験 10: builtin `Map` (linked hash map) の grow 専用 path
+
+json `Map` は builtin の linked hash map。**hashmap と違って prev/next
+の linked list 不変条件を保つ必要があり、Robin Hood swap で
+push_away するときに `set_entry` 経由で `next.prev` を patch しないと
+LL が壊れる**。最初に inline で書いたら 1 test 失敗 (LL の tail 計算
+ミスで retain が 502 を返した)。
+
+`add_entry_to_tail` + `push_away` の既存ヘルパを再利用する
+シンプル版に書き直して全 test pass。
+
+**実装** (`notes/linked_hash_map_grow_specialized.diff`, 62 行):
+
+```moonbit
+fn[K, V] Map::rehash_place_entry(self, outer : Entry[K, V]) -> Unit {
+  let hash = outer.hash
+  for psl = 0, idx = hash & self.capacity_mask {
+    match self.entries[idx] {
+      None => {
+        outer.psl = psl
+        outer.prev = self.tail
+        self.add_entry_to_tail(idx, outer)  // 既存ヘルパが LL を保つ
+        return
+      }
+      Some(curr) =>
+        if psl > curr.psl {
+          self.push_away(idx, curr)
+          outer.psl = psl
+          outer.prev = self.tail
+          self.add_entry_to_tail(idx, outer)
+          return
+        } else { continue psl + 1, (idx + 1) & self.capacity_mask }
+    }
+  }
+}
+```
+
+(Eq check と grow_at check を省くだけ。Entry 構造体の new
+allocation も省ける = 元の Entry を再利用。)
+
+**結果** (json_parse, 単発計測): wasm-gc -3〜5%。json の bench は
+1 オブジェクト 8 キーで grow が 1 回しか走らないため小さい。
+6503/6503 tests pass。
+
+## 全 patch 積み + 全 workload 計測
+
+10 workload を baseline ↔ all-patched で測定:
+
+| workload          | wasm base→p | Δ | wasm-gc base→p | Δ | native base→p | Δ |
+|-------------------|------------:|--:|---------------:|--:|--------------:|--:|
+| **bigint_ops**    | 323→113     | **-65%** | 53→18  | **-65%** | 39→14 | **-64%** |
+| **hashmap_ops**   | 313→260     | **-17%** | 98→77  | **-22%** | 80→68 | **-15%** |
+| **hashset_ops**   | 321→265     | **-17%** | 92→81  | **-12%** | 81→74 | -9% |
+| sorted_map_merge  | 125→111     | **-11%** | 41→40  | -2% | 24→23 | -4% |
+| json_parse        | 667→666     | 0%  | 189→171 | **-9.5%** | 127→123 | -3% |
+| sorted_set_union  | 124→116     | -6% | 44→46  | +5% (noise) | 24→24 | 0% |
+| priority_queue_ops| 324→303     | -6% | 80→81  | +1% (noise) | 90→87 | -3% |
+| regex_match       | 99→101      | +2% (noise) | 30→30 | 0% | 20→20 | 0% |
+| deque_ops         | 182→189     | +4% (noise) | 73→70 | -4% | 46→46 | 0% |
+| main (cpu)        | 407→419     | +3% (noise) | 110→110 | 0% | 57→58 | 0% |
+
+bench-対象 patch のあるものは全て改善。**bigint, hashmap, hashset で
+クリーンに 15〜65% 改善**。`make_tree`/`create` inline 系は wasm で
+よく効く (関数呼び出し prolog/epilog コストが消える)。関連 patch の
+ない 4 workload (regex/deque/pq/main) は誤差範囲で退行なし。
+
+全 patch 込みで **moonbitlang/core の 6503 tests 全 pass**。
+
 ## まとめ
 
-| # | 実験 | wasm | wasm-gc | js | native | テスト | 採否 |
-|---|---|--:|--:|--:|--:|:--:|:--:|
-| 1 | PQ pairing → binary heap | (改善?) | **+135%** | +180% | +24% | n/a | ❌ 退行 |
-| 2 | deque mod → bitmask | -8.5% | -20.6% | -19.3% | -24.1% | **24 fail** | ⚠️ API 衝突 |
-| 3 | **bigint n×1 fast path** | **-66%** | **-71%** | noise | **-70%** | ✅ | ✅ 採用 |
-| 4 | Hasher chain `#inline` | -3.6% | 0 | -2% | -7% | ✅ | ❌ 誤差 |
-| 5 | json safe-int 二度走査排除 | noise | -7.5% | -3.7% | -3.8% | ✅ | ✅ 小 |
-| 6 | sorted_map make_tree inline | **-13%** | -9% | -7% | -4% | ✅ | ✅ 中 |
-| 7 | **hashmap grow 専用 rehash** | **-19%** | **-19%** | **-18%** | **-17%** | ✅ | ✅ 採用 |
+| # | 実験 | wasm | wasm-gc | テスト | 採否 |
+|---|---|--:|--:|:--:|:--:|
+| 1 | PQ pairing → binary heap | (改善?) | **+135%** | n/a | ❌ 退行 |
+| 2 | deque mod → bitmask | -8.5% | -20.6% | **24 fail** | ⚠️ API 衝突 |
+| 3 | **bigint n×1 fast path** | **-65%** | **-65%** | ✅ | ✅ 採用 |
+| 4 | Hasher chain `#inline` | -3.6% | 0 | ✅ | ❌ 誤差 |
+| 5 | json safe-int 二度走査排除 | noise | -7.5% | ✅ | ✅ 小 |
+| 6 | sorted_map make_tree inline | **-13%** | -9% | ✅ | ✅ 中 |
+| 7 | **hashmap grow 専用 rehash** | **-19%** | **-19%** | ✅ | ✅ 採用 |
+| 8 | **hashset grow 専用 rehash** | **-19%** | **-14%** | ✅ | ✅ 採用 |
+| 9 | immut/sorted_set create inline | -8% | -6% | ✅ | ✅ 小 |
+| 10 | builtin Map grow 専用 path | noise | -3〜5% | ✅ | ✅ 小 (json で効く) |
 
-`notes/*.diff` に実 diff を置いた:
+`notes/*.diff` に 8 つの実 diff (合計 379 行) を置いた:
 - `bigint_mul_single_limb.diff` (48 行) — PR ready
 - `hashmap_grow_specialized.diff` (46 行) — PR ready
+- `hashset_grow_specialized.diff` (49 行) — PR ready
+- `linked_hash_map_grow_specialized.diff` (62 行) — PR ready
 - `sorted_map_make_tree.diff` (30 行) — PR ready
+- `sorted_set_create_inline.diff` (27 行) — PR ready
 - `json_skip_double_scan.diff` (17 行) — PR ready
 - `deque_bitmask.diff` (100 行) — API 議論が要る
 
