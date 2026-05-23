@@ -201,15 +201,23 @@ import { convert } from "moonbit-pprof/cpuprofile-to-pprof";
 import { writePprofFromFirefox } from "moonbit-pprof/firefox-to-pprof";
 ```
 
-## 調査ログ / `moonbitlang/core` 向け patches
+## 調査ログ / upstream 向け patches
 
 `notes/` 配下にプロファイルから導いた patch 実験と upstream PR 用素材:
+
+### `moonbitlang/core`
 
 - [`notes/data_structures_comparison.md`](notes/data_structures_comparison.md) — 14 workload × 4 backend のクロス測定 (refcount 仮説の検証)
 - [`notes/patch_experiments.md`](notes/patch_experiments.md) — 10 個のパッチ実験 (7 採用 / 1 議論先行 / 2 不採用)
 - [`notes/pr_numbers.md`](notes/pr_numbers.md) — `--no-profile` で取った各 PR 単独の clean 数値
 - [`notes/pr_plan.md`](notes/pr_plan.md) — 既存 upstream PR/Issue との重複チェック + 提出計画
 - [`notes/pr-drafts/`](notes/pr-drafts/) — moonbitlang/core 向けの PR 素材 (4 PR + 1 Issue)
+
+### `moonbitlang/async`
+
+- [`notes/async_investigation.md`](notes/async_investigation.md) — callgrind 経由のプロファイル + 2 パッチ
+- [`notes/async-pr-drafts/`](notes/async-pr-drafts/) — moonbitlang/async 向けの PR 素材 (1 PR)
+- `bench-async/cmd/{pause_loop,spawn_wait,aqueue_throughput}` — pure-coroutine ワークロード
 
 ### 専用ツール
 
