@@ -1,0 +1,22 @@
+[package]
+name = "pprof-summary"
+description = "Read a pprof profile and print self-time / mem-mgmt rollups and (with --diff) per-function baseline-vs-patched deltas."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+firefox-to-pprof.workspace = true
+flate2.workspace = true
+prost.workspace = true
+regex = "1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[[bin]]
+name = "pprof-summary"
+path = "src/main.rs"

@@ -4,10 +4,9 @@
 4 バックエンドでビルドし、各実行を [pprof](https://github.com/google/pprof)
 形式でプロファイルする実験プロジェクト。
 
-中身は実験プロジェクト + 3 言語のライブラリ群:
+中身は実験プロジェクト + 2 言語のライブラリ群:
 
 - **Rust crates** — `moonbit-demangle`, `firefox-to-pprof`, `wasmtime-guest-pprof`
-- **Go module** — `github.com/mizchi/pprof-mbt/go/demangle`
 - **npm package** — `moonbit-pprof` (subpath exports: `./demangle`, `./cpuprofile-to-pprof`, `./firefox-to-pprof`)
 
 これらは MoonBit を扱う他のツールから個別に再利用できる形にしてある。
@@ -16,7 +15,6 @@
 
 ```
 Cargo.toml                              ← Rust workspace
-go.work                                 ← Go workspace
 package.json                            ← npm workspace
 
 crates/                                 公開ライブラリ (Rust)
@@ -24,15 +22,13 @@ crates/                                 公開ライブラリ (Rust)
 ├── firefox-to-pprof/                   Firefox Profiler JSON → pprof
 └── wasmtime-guest-pprof/               wasmtime GuestProfiler 駆動 + pprof
 
-go/                                     公開ライブラリ (Go)
-└── demangle/                           Symbol(name) string
-
 packages/                               公開ライブラリ (npm)
 └── moonbit-pprof/                      demangle / cpuprofile / firefox subpath exports
 
 runners/                                CLI / binary
-├── wasmtime-runner/                    Rust。3 crate を使う thin main.rs
-├── wzprof-runner/                      Go (legacy 比較用)
+├── wasmtime-runner/                    Rust。wasm を wasmtime + GuestProfiler で実行 + pprof 化
+├── pprof-summary/                      Rust。pprof を読んで self-time / mem-mgmt rollup, --diff
+├── bench-runner/                       Rust。バックエンド横断ベンチ + baseline ↔ patched 表
 ├── run-wasm-gc.mjs / run-js.mjs        Node V8 inspector
 ├── cpuprofile-to-pprof.mjs
 ├── samply-to-pprof.mjs
@@ -48,8 +44,9 @@ nix develop
 ```
 
 [moonbit-overlay](https://github.com/moonbit-community/moonbit-overlay)
-経由で `moon`、その他 Node.js / Go / Rust / wasmtime / samply / wabt /
-protobuf / graphviz が入る。
+経由で `moon`、その他 Node.js / Rust / wasmtime / samply / wabt /
+protobuf / graphviz が入る (`go` は visualization 用の `go tool pprof`
+だけ取り込み)。
 
 各言語の runner / binary をビルド:
 
@@ -58,11 +55,7 @@ mkdir -p .bin
 
 # Rust: workspace 一括ビルド + .bin にコピー
 cargo build --workspace --release
-cp target/release/wasmtime-runner .bin/
-
-# Go: 2 binary (legacy + 補助 CLI)
-( cd runners/wzprof-runner && go build -buildvcs=false -o ../../.bin/wzprof-runner . )
-( cd runners/wzprof-runner && go build -buildvcs=false -o ../../.bin/pprof-demangle ./cmd/demangle )
+cp target/release/wasmtime-runner target/release/pprof-summary target/release/bench-runner .bin/
 
 # npm workspace は symlink 解決のみ
 npm install
@@ -129,16 +122,6 @@ npm run build:wasm && npm run profile:wasm
 - ackermann(3, 10) は wasmtime のデフォルト wasm stack (512 KiB) を超える
   ので、`max_wasm_stack(8 MiB)` + `async_stack_size(16 MiB)` を上げてある。
 
-### wasm (legacy: wzprof) ※非推奨
-
-```sh
-npm run profile:wasm:wzprof
-```
-
-最初のプロトタイプ。wazero インタプリタは Cranelift JIT より 3000× 以上遅く、
-同じ workload で 14 分かかる上、per-call listener なので mandel_sum 等が
-profile から消える。実用には wasmtime-runner を使う。
-
 ### native (samply 経由)
 
 ```sh
@@ -160,7 +143,6 @@ npm run build:native && npm run profile:native
 | wasm-gc | Node inspector (V8) | V8 sampling | `cpuprofile-to-pprof.mjs` |
 | js      | Node inspector (V8) | V8 sampling | `cpuprofile-to-pprof.mjs` |
 | wasm    | wasmtime GuestProfiler (Cranelift JIT) | epoch tick sampling | `firefox-to-pprof` crate / `wasmtime-to-pprof.mjs` |
-| wasm (legacy) | wzprof (wazero interp) | per-call listener | wzprof 直接 + `pprof-demangle` |
 | native  | samply (Mach-O / ELF) | OS sampling | `samply-to-pprof.mjs` |
 
 どれもマングル名 (`_M0FP26mizchi5bench9ackermann` の類) を pprof に流せ、
@@ -168,7 +150,7 @@ npm run build:native && npm run profile:native
 
 ## ライブラリとして使う
 
-3 言語ともプロジェクト外から取り込み可能:
+Rust / npm の 2 系統でプロジェクト外から取り込み可能:
 
 ### Rust
 
@@ -183,17 +165,6 @@ wasmtime-guest-pprof = "0.1"    # wasmtime app に直接組み込む
 ```rust
 use moonbit_demangle::demangle;
 assert_eq!(demangle("_M0FP26mizchi5bench9ackermann"), "mizchi::bench::ackermann");
-```
-
-### Go
-
-```go
-// go.mod
-require github.com/mizchi/pprof-mbt/go/demangle v0.1.0
-
-import "github.com/mizchi/pprof-mbt/go/demangle"
-demangle.Symbol("_M0FP26mizchi5bench9ackermann")
-// → "mizchi::bench::ackermann"
 ```
 
 ### JavaScript

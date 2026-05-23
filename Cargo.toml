@@ -5,6 +5,8 @@ members = [
     "crates/firefox-to-pprof",
     "crates/wasmtime-guest-pprof",
     "runners/wasmtime-runner",
+    "runners/pprof-summary",
+    "runners/bench-runner",
 ]
 
 [workspace.package]

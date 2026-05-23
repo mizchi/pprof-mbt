@@ -24,11 +24,10 @@ demangle(name: string): string
 ```
 
 Heuristic decoder for moonbit's symbol mangling. Returns `name` verbatim if
-it doesn't look mangled. See [`crates/moonbit-demangle`][rust] and
-[`go/demangle`][go] for matching implementations.
+it doesn't look mangled. See [`crates/moonbit-demangle`][rust] for the
+matching Rust implementation.
 
 [rust]: https://crates.io/crates/moonbit-demangle
-[go]: https://pkg.go.dev/github.com/mizchi/pprof-mbt/go/demangle
 
 ### `moonbit-pprof/cpuprofile-to-pprof`
 
