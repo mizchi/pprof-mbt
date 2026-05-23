@@ -1,0 +1,8 @@
+import {
+  "moonbitlang/async" @async,
+  "moonbitlang/async/semaphore" @semaphore,
+}
+
+options(
+  "is-main": true,
+)

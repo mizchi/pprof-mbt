@@ -167,3 +167,51 @@ Things I noticed but didn't implement:
    freelist would save 1 alloc per op. ~5% of aqueue_throughput.
 3. **`moonbit_drop_object` 19% on spawn_wait**. Same refcount story as
    core json_parse — the compiler-side fix is the lever.
+
+## Additional benches added (semaphore / cond_var / timer / io / gzip)
+
+Added 5 more workloads to cover more of async:
+
+| workload | what it does |
+|---|---|
+| `semaphore_throughput` | two tasks alternating acquire+release on a `Semaphore(1)` (no contention) |
+| `cond_var_signal` | producer paused then `signal`, consumer `wait`s in a loop |
+| `timer_burst` | spawn N tasks each `sleep(0)` — exercises the timer SortedSet add/remove |
+| `buffered_io_pipe` | producer writes through BufferedWriter, consumer reads from real OS pipe |
+| `gzip_roundtrip` | encoder → pipe → decoder, both ends on coroutines |
+
+### Profile highlights
+
+- `timer_burst`: 30% of instructions in `SortedSet::balance/add_node/delete_node/rotate_l` for `Timer`. The timer queue redesign (heap vs balanced tree) is the obvious follow-up but is a much larger change. Tried "lazy cancel" (skip `remove` when timer already fired in `wait_for_event`); naïve version regresses because cancelled timers leak in the set. **Not landed**.
+- `cond_var_signal`: dominated by `moonbit_drop_object` (12.8%), scheduler reschedule (8%), and `Cond::wait` (3.8% — including the Waiter struct alloc per call). No userland win without API redesign.
+- `semaphore_throughput`: similar to cond_var; allocation overhead dominates.
+- `buffered_io_pipe`: trait-method dispatch through `Writer::write`'s default impl is 15%+; would require specialization or alternative API.
+- `gzip_roundtrip`: `Encoder::match_byte` 41% + `find_match` 29% — the LZ77 search, inherent to the algorithm. But **`crc32_update`'s `for byte in chunk` was 16%** in iter+next, even though the loop body is trivial.
+
+## Patch C: gzip `crc32_update` direct Bytes indexing
+
+Replace `for byte in chunk` (BytesView::iter + Iter::next) with index loop over the backing `Bytes`. Diff at `notes/async_crc32_index_loop.diff` (26 lines).
+
+Tests: 31 `internal/gzip_internal` + 7 `gzip` + the rest (144 + 38 = 182 total) pass.
+
+## Final stacked numbers (baseline vs Patch B + Patch C, native, 3-run median)
+
+| workload          | baseline  | patched   | delta    |
+|-------------------|----------:|----------:|---------:|
+| `pause_loop`      | 707 ms    | 455 ms    | **-35.6%** |
+| `cond_var_signal` | 409 ms    | 318 ms    | **-22.2%** |
+| `gzip_roundtrip`  | 180 ms    | 157 ms    | **-12.8%** |
+| `semaphore_throughput` | 349 ms | 364 ms | +4% (noise) |
+| `timer_burst`     | 104 ms    | 109 ms    | +5% (noise) |
+| `spawn_wait`      | 271 ms    | 270 ms    | noise |
+| `aqueue_throughput` | 408 ms  | 425 ms    | +4% (noise) |
+| `buffered_io_pipe` | 112 ms   | 109 ms    | noise |
+
+Patch B (empty-timer short-circuit) helps any pure-coroutine workload
+that pauses through `wait_for_event` — not just the targeted
+`pause_loop`. `cond_var_signal` benefits the same way (-22%). Patch C
+only helps gzip but is a clean -13% there.
+
+The "small regressions" on timer_burst / semaphore_throughput /
+aqueue_throughput are all within the run-to-run noise floor we've
+been seeing (~±5%).

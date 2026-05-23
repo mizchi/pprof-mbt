@@ -28,3 +28,4 @@ runners/wasmtime-runner/target/
 
 # moonbit dependency cache (re-fetched by moon)
 .mooncakes/
+bench-async/_build/

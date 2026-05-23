@@ -8,7 +8,8 @@
 
 | # | ブランチ名 / Issue | 主な効果 | 行数 |
 |---|---|---|--:|
-| 01 | `pr-event-loop-empty-timer` | pause_loop -26.4% (空 timer 時の SortedSet iter を回避) | +14/-7 |
+| 01 | `pr-event-loop-empty-timer` | pause_loop -35.6%, cond_var_signal -22.2% (空 timer 時の SortedSet iter を回避) | +14/-7 |
+| 02 | `pr-gzip-crc32-index-loop` | gzip_roundtrip -12.8% (`for byte in chunk` の iter overhead を除去) | +13/-5 |
 
 詳細な調査ログは `notes/async_investigation.md` 参照。
 
