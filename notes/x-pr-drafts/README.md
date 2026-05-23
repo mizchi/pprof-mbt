@@ -9,6 +9,7 @@
 | # | ブランチ名 | 主な効果 | 行数 |
 |---|---|---|--:|
 | 01 | `pr-json5-lex-number-lazy-tostring` | json5_parse -5.2% (parse_double に StringView 直渡し、error 時のみ to_string) | +9/-3 |
+| 02 | `pr-base64-index-loop` | base64_encode -20.6% / base64_decode **-36.9%** (iter overhead 除去) | +33/-3 |
 
 詳細な調査ログ: `notes/x_investigation.md`
 

@@ -92,6 +92,30 @@ ways, md5 220ms both ways, chacha20 109→106ms which is noise). moonc
 apparently compiles both sequences to the same machine code. Same
 lesson as the earlier Hasher `#inline` experiment on core. **Dropped**.
 
+### ✅ `codec/base64/base64.mbt` index-based loop (PR-02)
+
+Both `Encoder::encode_to` and `Decoder::decode_to` walked their inputs
+via `for byte in bytes` / `for ch in input`. Both iterators are
+~32–35% of the respective self time even though the inner-loop body
+is a small match. Switched to:
+
+- `encode_to`: index the backing `Bytes` via `data() + start_offset()`,
+  iterate `0..<len`.
+- `decode_to`: iterate `0..<input.length()` and read
+  `input.unsafe_get(off)` (UTF-16 code unit) directly. base64 alphabet
+  is pure ASCII so reading by code unit is safe.
+
+Result on `bench-x/cmd/base64_*` (64 KiB × 500 iters):
+
+|               | baseline | patched | delta   |
+|---------------|---------:|--------:|--------:|
+| base64_encode |  710 ms  | 564 ms  | **-20.6%** |
+| base64_decode |  685 ms  | 432 ms  | **-36.9%** |
+
+Same iter-overhead pattern as moonbitlang/async's gzip `crc32_update`
+patch and the json5 `to_string` patch below. 3/3 `codec/base64` tests
+pass on upstream main with this applied.
+
 ### ✅ `json5/lex_number.mbt` lazy `to_string` (PR-01)
 
 `lex_number_end` did `let s = ctx.input[start:end].to_owned()` before

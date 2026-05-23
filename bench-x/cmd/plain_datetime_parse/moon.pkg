@@ -1,0 +1,7 @@
+import {
+  "moonbitlang/x/time" @time,
+}
+
+options(
+  "is-main": true,
+)

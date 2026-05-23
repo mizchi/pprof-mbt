@@ -1,0 +1,7 @@
+import {
+  "moonbitlang/x/codec/base64" @base64,
+}
+
+options(
+  "is-main": true,
+)
