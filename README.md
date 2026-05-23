@@ -201,6 +201,36 @@ import { convert } from "moonbit-pprof/cpuprofile-to-pprof";
 import { writePprofFromFirefox } from "moonbit-pprof/firefox-to-pprof";
 ```
 
+## 調査ログ / `moonbitlang/core` 向け patches
+
+`notes/` 配下にプロファイルから導いた patch 実験と upstream PR 用素材:
+
+- [`notes/data_structures_comparison.md`](notes/data_structures_comparison.md) — 14 workload × 4 backend のクロス測定 (refcount 仮説の検証)
+- [`notes/patch_experiments.md`](notes/patch_experiments.md) — 10 個のパッチ実験 (7 採用 / 1 議論先行 / 2 不採用)
+- [`notes/pr_numbers.md`](notes/pr_numbers.md) — `--no-profile` で取った各 PR 単独の clean 数値
+- [`notes/pr_plan.md`](notes/pr_plan.md) — 既存 upstream PR/Issue との重複チェック + 提出計画
+- [`notes/pr-drafts/`](notes/pr-drafts/) — moonbitlang/core 向けの PR 素材 (4 PR + 1 Issue)
+
+### 専用ツール
+
+| ツール | 用途 |
+|---|---|
+| `wasmtime-runner --no-profile` | profile を切ってクリーンな wasm wall-time |
+| `run-wasm-gc.mjs --no-profile` | V8 inspector を切って wasm-gc wall-time |
+| `run-js.mjs --no-profile` | 同 js |
+| `.bin/bench-runner` | baseline ↔ patched 自動切替 + markdown 表出力 |
+| `.bin/patched-toolchain` | `~/.moon` snapshot → diff 適用 → 全 target rebundle を 1 コマンドで |
+| `.bin/pprof-summary` | `Memory-management self time` rollup を含む top-N 表示 |
+
+PR-1 (bigint factorial 3×) の再現:
+
+```sh
+.bin/patched-toolchain init
+.bin/patched-toolchain apply notes/pr-drafts/01-bigint-mul-single-limb/patch.diff
+.bin/patched-toolchain rebundle
+.bin/bench-runner --workloads bigint_ops,bigint_square --runs 3
+```
+
 ## 制約 / 既知の TODO
 
 - メモリプロファイルは未対応 (CPU のみ)。wzprof は `-memprofile` フラグを
@@ -209,6 +239,8 @@ import { writePprofFromFirefox } from "moonbit-pprof/firefox-to-pprof";
   (`_M0I…`, `_M0M…`, `GsE`/`GuE` 接尾辞) は `core::` プレフィックスを
   落とすなど不完全。
 - llvm バックエンド (`moon build --target=llvm`) はビルドエラーで未検証。
+- Linux で native プロファイル (samply 相当) 未配線 — `perf-to-pprof`
+  TODO ([`notes/pprof_mbt_roadmap.md`](notes/pprof_mbt_roadmap.md))。
 
 ## License
 

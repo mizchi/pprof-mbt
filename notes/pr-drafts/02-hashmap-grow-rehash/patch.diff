@@ -1,5 +1,5 @@
 diff --git a/builtin/linked_hash_map.mbt b/builtin/linked_hash_map.mbt
-index 42b0fe47..1959d6ee 100644
+index 42b0fe47..ffe846b7 100644
 --- a/builtin/linked_hash_map.mbt
 +++ b/builtin/linked_hash_map.mbt
 @@ -558,7 +558,7 @@ fn[K, V] Map::shift_back(self : Map[K, V], idx : Int) -> Unit {
@@ -11,7 +11,7 @@ index 42b0fe47..1959d6ee 100644
    let old_head = self.head
    let new_capacity = self.capacity << 1
    self.entries = FixedArray::make(new_capacity, None)
-@@ -570,11 +570,46 @@ fn[K : Eq, V] Map::grow(self : Map[K, V]) -> Unit {
+@@ -570,11 +570,43 @@ fn[K : Eq, V] Map::grow(self : Map[K, V]) -> Unit {
    self.tail = -1
    for x = old_head {
      match x {
@@ -36,10 +36,7 @@ index 42b0fe47..1959d6ee 100644
 +/// fast path used by `grow`: like `set_with_hash` but skips the key
 +/// equality check (entries from the old table are unique) and the
 +/// load-factor check (we just doubled capacity).
-+fn[K, V] Map::rehash_place_entry(
-+  self : Map[K, V],
-+  outer : Entry[K, V],
-+) -> Unit {
++fn[K, V] Map::rehash_place_entry(self : Map[K, V], outer : Entry[K, V]) -> Unit {
 +  let hash = outer.hash
 +  for psl = 0, idx = hash & self.capacity_mask {
 +    match self.entries[idx] {

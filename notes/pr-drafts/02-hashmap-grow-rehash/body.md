@@ -43,10 +43,10 @@ Workloads (`bench/cmd/*` in <https://github.com/mizchi/pprof-mbt>):
 
 | target  | result |
 |---------|--------|
-| wasm    | (filled in after CI runs) |
-| wasm-gc | (filled in after CI runs) |
-| js      | (filled in after CI runs) |
-| native  | (filled in after CI runs) |
+| wasm    | 6500 / 6500 pass |
+| wasm-gc | 6500 / 6500 pass |
+| js      | 6459 / 6459 pass |
+| native  | 6411 / 6411 pass |
 
 ## Relation to existing work
 

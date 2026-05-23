@@ -29,7 +29,7 @@ The js -27% on `json_numbers` is the most striking: V8 inlines the safe-int bran
 
 | target  | result |
 |---------|--------|
-| wasm    | (filled in after CI runs) |
-| wasm-gc | (filled in after CI runs) |
-| js      | (filled in after CI runs) |
-| native  | (filled in after CI runs) |
+| wasm    | 6500 / 6500 pass |
+| wasm-gc | 6500 / 6500 pass |
+| js      | 6459 / 6459 pass |
+| native  | 6411 / 6411 pass |
