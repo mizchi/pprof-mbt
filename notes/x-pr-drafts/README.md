@@ -13,6 +13,7 @@
 | 03 | `pr-encoding-utf8-code-unit-walk` | encoding_utf8 **-22.7%** (`for char in src` を code-unit walk に書き換え) | +22/-3 |
 | 04 | `pr-uuid-tostring-inplace` | uuid_parse **-64.1%** (`Bytes::from_array(Array::from_fixed_array(rv))` 2 段 copy を `unsafe_reinterpret_as_bytes` 1 段に) | +5/-1 |
 | 05 | `pr-path-show-write-view` | path_normalize **-25.9%** (`UnixPath` / `WinPath` Show 内の `write_string(x.to_owned())` を `write_view(x)` 直接書きに) | +4/-4 |
+| 06 | `pr-time-split-substring` | plain_datetime_parse **-26.3%** (`time/util.mbt`の `split` を char-by-char StringBuilder から StringView スライスに) | +5/-9 |
 
 **`moonbitlang/core` PR-01 (bigint mul_single_limb) が moonbitlang/x の decimal_arith にも cascade**: decimal の `factorial` 系チェーンは BigInt × 1-limb の連鎖なので、別ベンチで **-72%** (170→47ms) を確認。x 側に新規パッチは要らない。
 

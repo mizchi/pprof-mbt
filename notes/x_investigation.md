@@ -159,6 +159,38 @@ Same iter-overhead pattern as moonbitlang/async's gzip `crc32_update`
 patch and the json5 `to_string` patch below. 3/3 `codec/base64` tests
 pass on upstream main with this applied.
 
+### ✅ `time/util.mbt` split via StringView slicing (PR-06)
+
+`time/util.mbt`'s `split(s, delimiter)` was char-by-char
+`StringBuilder::write_char` + `to_string` + `reset` per segment. The
+file already had a `FIXME: use split method of String` comment. Replaced
+with index-tracking + slicing:
+
+```moonbit
+let mut start = 0
+for i = 0; i < s.length(); i = i + 1 {
+  if s.code_unit_at(i) == delimiter_code {
+    spl.push(s[start:i].to_owned())
+    start = i + 1
+  }
+}
+spl.push(s[start:].to_owned())
+```
+
+`PlainDateTime::from_string` calls `split(str, 'T')` per parse,
+`Duration::from_string` calls `split(s, '.')` — both pay this cost on
+every call.
+
+Result on `bench-x/cmd/plain_datetime_parse` (200k iters):
+
+|                      | baseline | patched | delta   |
+|----------------------|---------:|--------:|--------:|
+| plain_datetime_parse |  179 ms  | 132 ms  | **-26.3%** |
+
+Callgrind: 2.46 G → 1.93 G Ir (-21.5%). `StringBuilder::write_char`
+(8.42%) + `grow_if_necessary` (6.23%) disappear. 148/148
+`moonbitlang/x/time` tests pass on upstream main.
+
 ### ✅ `path/posix/unix_path.mbt` Show write_view (PR-05)
 
 `UnixPath`'s `Show::output` wrote each StringView component via
