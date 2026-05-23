@@ -21,8 +21,8 @@ native it's `bash time real`.
 |                     | wasm-gc |   0.418  |  0.252  | **-39.7%** |
 |                     | js      |   0.589  |  0.358  | **-39.2%** |
 | path_normalize      | native  |   0.285  |  0.206  | **-27.7%** |
-|                     | wasm-gc |   —      |  —      | (FFI shim missing for `is_windows`) |
-|                     | js      |   —      |  —      | (FFI shim missing for `is_windows`) |
+|                     | wasm-gc |   —      |  —      | (now runs after host-shim fix; see below) |
+|                     | js      |   —      |  —      | (now runs via vm.Script fallback; see below) |
 | plain_datetime_parse| native  |   0.180  |  0.133  | **-26.1%** |
 |                     | wasm-gc |   0.232  |  0.212  | **-8.6%**  |
 |                     | js      |   0.395  |  0.324  | **-18.0%** |
@@ -86,14 +86,19 @@ native it's `bash time real`.
   slower). For workloads dominated by string parsing the gap shrinks
   to ~2x.
 
-## What broke
+## What broke (now fixed in roadmap v2 task D)
 
-- `path_normalize` on wasm-gc / js: `@path.internal.ffi.is_windows`
-  reads from Node's `os` module via `require`. The wasmtime host shim
-  in `runners/run-wasm-gc.mjs` doesn't provide
-  `__moonbit_sys_unstable`, and the JS module uses `require()` which
-  ES-module Node rejects. Both fixable in the runner but out of scope
-  for this round.
+- ~~`path_normalize` on wasm-gc / js failed~~. The wasm-gc host shim
+  (`runners/run-wasm-gc.mjs`) now provides an
+  `__moonbit_sys_unstable.is_windows` stub and a catch-all noop stub
+  for any other moonbit FFI imports it doesn't know about. The JS
+  runner (`runners/run-js.mjs`) now detects `require()` calls in the
+  emitted source and switches to a `vm.Script` fallback with
+  `createRequire()` injected. With those two fixes:
+  - wasm-gc: path_normalize 304 ms baseline (full speed)
+  - js: 7700 ms baseline (vm.Script is ~5-15x slower than dynamic
+    import, which is the trade-off for not being able to dynamic-import
+    a CommonJS-style file).
 
 - A few other modules (decimal, fs, sys) aren't on bench-x because
   they either need a JS-only runtime (decimal pulls `@bigint`, which

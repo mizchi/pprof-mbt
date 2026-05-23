@@ -32,9 +32,29 @@ const imports = {
       }
     },
   },
+  // Used by moonbitlang/x's @path / @fs etc. The set of names is small
+  // and stable; we only need to satisfy the linker.
+  __moonbit_sys_unstable: {
+    is_windows: () => (process.platform === "win32" ? 1 : 0),
+  },
 };
 
+// Resolve any imports we don't already cover with a noop stub of the
+// right arity, so the bench can link even if the module pulls in new
+// FFI shims we haven't seen yet. Logs the stub list to stderr so the
+// reader knows which calls are returning fake values.
 const mod = await WebAssembly.compile(bytes);
+const stubbed = [];
+for (const imp of WebAssembly.Module.imports(mod)) {
+  if (imports[imp.module]?.[imp.name] !== undefined) continue;
+  imports[imp.module] ??= {};
+  imports[imp.module][imp.name] = () => 0;
+  stubbed.push(`${imp.module}.${imp.name}`);
+}
+if (stubbed.length > 0) {
+  console.error(`[wasm-gc] stubbed imports: ${stubbed.join(", ")}`);
+}
+
 const instance = await WebAssembly.instantiate(mod, imports);
 
 let session = null;
