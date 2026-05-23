@@ -1,0 +1,30 @@
+From 48f2197dacae98bbf9b683b6cf12b6c446cfe835 Mon Sep 17 00:00:00 2001
+From: bench <bench@example.com>
+Date: Sat, 23 May 2026 06:28:46 +0000
+Subject: [PATCH] perf(uuid): emit String from FixedArray in place, skip
+ Array+Bytes copies
+
+---
+ uuid/uuid.mbt | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/uuid/uuid.mbt b/uuid/uuid.mbt
+index 5ccad5f..f9e38bd 100644
+--- a/uuid/uuid.mbt
++++ b/uuid/uuid.mbt
+@@ -198,7 +198,11 @@ pub fn UUID::to_string(self : UUID) -> String {
+       rv[i - 1] = dash.to_byte()
+       continue v, i - 2, i - 2, d - 1
+     } else {
+-      break Bytes::from_array(Array::from_fixed_array(rv)).to_unchecked_string()
++      // `rv` is already the UTF-16 byte buffer we want. Reinterpret in
++      // place instead of going through Array::from_fixed_array +
++      // Bytes::from_array, which together account for ~58% of self
++      // time on a uuid round-trip benchmark.
++      break rv.unsafe_reinterpret_as_bytes().to_unchecked_string()
+     }
+   }
+ }
+-- 
+2.43.0
+

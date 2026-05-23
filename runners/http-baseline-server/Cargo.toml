@@ -1,0 +1,16 @@
+[package]
+name = "http-baseline-server"
+description = "Minimal empty-handler HTTP server (axum + tokio) used as a compiled-language baseline for k6 load tests against moonbitlang/async's HTTP server. Replaces bench-async/cmd/http_server_benchmark/server.go."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+
+[[bin]]
+name = "http-baseline-server"
+path = "src/main.rs"

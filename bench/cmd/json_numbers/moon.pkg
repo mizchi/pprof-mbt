@@ -1,0 +1,7 @@
+import {
+  "moonbitlang/core/json" @json,
+}
+
+options(
+  "is-main": true,
+)

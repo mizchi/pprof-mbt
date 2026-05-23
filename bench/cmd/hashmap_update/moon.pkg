@@ -1,0 +1,7 @@
+import {
+  "moonbitlang/core/hashmap" @hashmap,
+}
+
+options(
+  "is-main": true,
+)

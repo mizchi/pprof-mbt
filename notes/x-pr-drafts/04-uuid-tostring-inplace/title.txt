@@ -1,0 +1,1 @@
+perf(uuid): emit String from FixedArray in place, skip Array+Bytes copies

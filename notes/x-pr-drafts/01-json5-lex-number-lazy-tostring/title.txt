@@ -1,0 +1,1 @@
+perf(json5): pass StringView to parse_double, materialize owned String only on error

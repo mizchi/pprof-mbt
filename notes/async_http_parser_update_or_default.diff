@@ -1,0 +1,16 @@
+--- /tmp/upstream/async/src/http/parser.mbt	2026-05-23 05:03:38.712840324 +0000
++++ /home/user/pprof-mbt/bench-async/.mooncakes/moonbitlang/async/src/http/parser.mbt	2026-05-23 05:52:16.380263078 +0000
+@@ -276,10 +276,9 @@
+       }
+       _ => ()
+     }
+-    match headers.get(key) {
+-      None => headers[key] = value
+-      Some(value0) => headers[key] = "\{value0},\{value}"
+-    }
++    // Single hashmap probe (was 2: get + set). For repeated header
++    // names HTTP requires comma-joining; for new keys we just insert.
++    headers.update_or_default(key, value, value0 => "\{value0},\{value}")
+   }
+   (headers, cookies)
+ }

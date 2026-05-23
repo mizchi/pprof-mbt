@@ -1,0 +1,27 @@
+--- /root/.moon/lib/core/immut/sorted_set/immutable_set.mbt	2026-05-22 05:42:49.000000000 +0000
++++ /tmp/moonbit-patched/lib/core/immut/sorted_set/immutable_set.mbt	2026-05-23 02:31:28.076681771 +0000
+@@ -901,12 +901,23 @@
+ 
+ ///|
+ /// Creates a new node.
++#inline
+ fn[A] create(
+   left : SortedSet[A],
+   value : A,
+   right : SortedSet[A],
+ ) -> SortedSet[A] {
+-  Node(left~, right~, value~, size=left.length() + right.length() + 1)
++  // Inline size extraction: same shape as SortedSet::length() but avoids
++  // the function call. Hot during union / intersection / balance recursion.
++  let ls = match left {
++    Empty => 0
++    Node(size~, ..) => size
++  }
++  let rs = match right {
++    Empty => 0
++    Node(size~, ..) => size
++  }
++  Node(left~, right~, value~, size=ls + rs + 1)
+ }
+ 
+ ///|

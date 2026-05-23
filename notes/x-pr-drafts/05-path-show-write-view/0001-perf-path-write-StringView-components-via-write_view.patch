@@ -1,0 +1,48 @@
+From 181a1d51863985301ca94dd980fdfdc962d1ee5a Mon Sep 17 00:00:00 2001
+From: claude <chikuba-kotaro@arkedgespace.com>
+Date: Sat, 23 May 2026 06:38:06 +0000
+Subject: [PATCH] perf(path): write StringView components via write_view
+ instead of copying to_owned
+
+---
+ path/posix/unix_path.mbt | 4 ++--
+ path/win32/win_path.mbt  | 4 ++--
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/path/posix/unix_path.mbt b/path/posix/unix_path.mbt
+index cd88af1..cd05167 100644
+--- a/path/posix/unix_path.mbt
++++ b/path/posix/unix_path.mbt
+@@ -85,10 +85,10 @@ impl Show for UnixPath with output(self : UnixPath, logger : &Logger) -> Unit {
+   match components {
+     [] => ()
+     [x, .. xs] => {
+-      logger.write_string(x.to_owned())
++      logger.write_view(x)
+       for x in xs {
+         logger.write_char('/')
+-        logger.write_string(x.to_owned())
++        logger.write_view(x)
+       }
+     }
+   }
+diff --git a/path/win32/win_path.mbt b/path/win32/win_path.mbt
+index 6c9f44f..4df4b1c 100644
+--- a/path/win32/win_path.mbt
++++ b/path/win32/win_path.mbt
+@@ -264,10 +264,10 @@ fn WinPath::output(self : WinPath, logger : &Logger) -> Unit {
+   match components {
+     [] => ()
+     [x, .. xs] => {
+-      logger.write_string(x.to_owned())
++      logger.write_view(x)
+       for component in xs {
+         logger.write_char(BackSlash)
+-        logger.write_string(component.to_owned())
++        logger.write_view(component)
+       }
+     }
+   }
+-- 
+2.43.0
+

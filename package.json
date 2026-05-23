@@ -13,11 +13,10 @@
     "build:native": "cd bench && moon build --release --target=native cmd/main",
     "profile:wasm-gc": "node runners/run-wasm-gc.mjs bench/_build/wasm-gc/release/build/cmd/main/main.wasm wasm-gc.cpuprofile 5 && node runners/cpuprofile-to-pprof.mjs wasm-gc.cpuprofile wasm-gc.pb.gz",
     "profile:js": "node runners/run-js.mjs $PWD/bench/_build/js/release/build/cmd/main/main.js js.cpuprofile && node runners/cpuprofile-to-pprof.mjs js.cpuprofile js.pb.gz",
-    "profile:wasm": ".bin/wasmtime-runner --interval-us 1000 --out wasmtime-guest.pb.gz bench/_build/wasm/release/build/cmd/main/main.wasm",
-    "profile:wasm:wzprof": ".bin/wzprof-runner -cpuprofile wasm.pb.gz -sample 0.05 bench/_build/wasm/release/build/cmd/main/main.wasm && .bin/pprof-demangle wasm.pb.gz wasm.demangled.pb.gz",
+    "profile:wasm": ".bin/moon-pprof profile --interval-us 1000 --out wasmtime-guest.pb.gz bench/_build/wasm/release/build/cmd/main/main.wasm",
     "profile:native": "samply record --save-only --unstable-presymbolicate -o native-samply.json.gz --no-open -- bench/_build/native/release/build/cmd/main/main.exe && node runners/samply-to-pprof.mjs native-samply.json.gz native-samply.json.syms.json native.pb.gz"
   },
   "devDependencies": {
-    "moonbit-pprof": "*"
+    "@mizchi/pprof-tools": "*"
   }
 }

@@ -4,7 +4,7 @@
 // is shared with samply-to-pprof.mjs via runners/lib/firefox-to-pprof.mjs.
 
 import { readFileSync } from "node:fs";
-import { writePprofFromFirefox } from "moonbit-pprof/firefox-to-pprof";
+import { writePprofFromFirefox } from "@mizchi/pprof-tools/firefox-to-pprof";
 
 const [, , inPath = "wasmtime-guest.json", outPath = "wasmtime-guest.pb.gz"] = process.argv;
 const profile = JSON.parse(readFileSync(inPath, "utf8"));

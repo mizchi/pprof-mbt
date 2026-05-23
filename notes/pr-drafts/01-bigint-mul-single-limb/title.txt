@@ -1,0 +1,1 @@
+perf(bigint): specialize (n-limb) x (1-limb) multiplication

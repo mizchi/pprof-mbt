@@ -1,0 +1,47 @@
+From 6d440747f2a9c44f5ca339d34e0f1543408cb15a Mon Sep 17 00:00:00 2001
+From: claude <chikuba-kotaro@arkedgespace.com>
+Date: Sat, 23 May 2026 06:45:52 +0000
+Subject: [PATCH] perf(time): split via StringView slicing instead of
+ char-by-char StringBuilder append
+
+---
+ time/util.mbt | 14 +++++---------
+ 1 file changed, 5 insertions(+), 9 deletions(-)
+
+diff --git a/time/util.mbt b/time/util.mbt
+index bb6f227..3423354 100644
+--- a/time/util.mbt
++++ b/time/util.mbt
+@@ -89,24 +89,20 @@ test "add_suffix_zero" {
+ }
+ 
+ ///|
+-/// FIXME: use split method of String
+ fn split(s : String, delimiter : Char) -> Array[String] {
+   let spl = []
+   if s.length() == 0 {
+     return spl
+   }
+-  let buf = StringBuilder::new(size_hint=0)
+   let delimiter_code = Char::to_int(delimiter).to_uint16()
++  let mut start = 0
+   for i = 0; i < s.length(); i = i + 1 {
+-    let code_unit = s.code_unit_at(i)
+-    if code_unit == delimiter_code {
+-      spl.push(buf.to_string())
+-      buf.reset()
+-    } else {
+-      buf.write_char(UInt16::unsafe_to_char(code_unit))
++    if s.code_unit_at(i) == delimiter_code {
++      spl.push(s[start:i].to_owned())
++      start = i + 1
+     }
+   }
+-  spl.push(buf.to_string())
++  spl.push(s[start:].to_owned())
+   spl
+ }
+ 
+-- 
+2.43.0
+

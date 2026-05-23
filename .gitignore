@@ -5,9 +5,6 @@ result
 node_modules/
 .claude/
 
-# go workspace sum file is regenerated from individual go.sum files
-go.work.sum
-
 # moonbit build artifacts
 bench/_build/
 
@@ -19,9 +16,15 @@ bench/_build/
 *.syms.json
 native-samply.json
 native-samply.json.gz
-wasm-wzprof.pb.gz
 wasmtime-guest.json
 
 # Rust build artifacts (workspace root)
 target/
-runners/wasmtime-runner/target/
+
+# moonbit dependency cache (re-fetched by moon)
+.mooncakes/
+bench-async/_build/
+
+# moonbitlang/x bench artifacts
+bench-x/_build/
+bench-x/.mooncakes/

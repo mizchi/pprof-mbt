@@ -21,12 +21,12 @@
             nodejs_22
             wabt        # wasm2wat etc.
             binaryen    # wasm-opt
-            go          # for pprof CLI
+            go          # only for `go tool pprof` visualization; no Go code in-repo
             graphviz    # pprof -svg needs dot
             samply      # macOS/Linux sampling profiler → Firefox JSON, converted to pprof
             gperftools  # libprofiler.dylib (DYLD_INSERT_LIBRARIES route)
             wasmtime    # for CLI use + reference for wasmtime-runner
-            cargo       # builds runners/wasmtime-runner
+            cargo       # builds runners/wasmtime-runner / pprof-summary / bench-runner
             rustc
             protobuf    # protoc for prost-build (pprof emission)
           ];

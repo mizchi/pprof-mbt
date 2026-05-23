@@ -1,0 +1,1 @@
+perf(time): split via StringView slicing instead of char-by-char StringBuilder append

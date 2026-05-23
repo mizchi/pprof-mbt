@@ -1,0 +1,8 @@
+import {
+  "moonbitlang/async" @async,
+  "moonbitlang/async/aqueue" @aqueue,
+}
+
+options(
+  "is-main": true,
+)

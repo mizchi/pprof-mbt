@@ -1,0 +1,20 @@
+--- /tmp/upstream/x/json5/lex_number.mbt	2026-05-23 05:59:13.507336329 +0000
++++ /home/user/pprof-mbt/bench-x/.mooncakes/moonbitlang/x/json5/lex_number.mbt	2026-05-23 06:08:27.129071463 +0000
+@@ -49,8 +49,14 @@
+   start : Int,
+   end : Int,
+ ) -> Double raise ParseError {
+-  let s = ctx.input[start:end].to_owned()
+-  @string.parse_double(s) catch {
+-    _ => parse_error(InvalidNumber(offset_to_position(ctx.input, start), s))
++  // parse_double already accepts a StringView; only materialize an
++  // owned String for the error payload (the cold path). Saves one
++  // allocation + memcpy per number on the happy path.
++  let view = ctx.input[start:end]
++  @string.parse_double(view) catch {
++    _ =>
++      parse_error(
++        InvalidNumber(offset_to_position(ctx.input, start), view.to_string()),
++      )
+   }
+ }

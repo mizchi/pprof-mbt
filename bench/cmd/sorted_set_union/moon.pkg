@@ -1,0 +1,7 @@
+import {
+  "moonbitlang/core/immut/sorted_set" @sset,
+}
+
+options(
+  "is-main": true,
+)

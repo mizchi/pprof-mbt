@@ -1,0 +1,9 @@
+import {
+  "moonbitlang/async" @async,
+  "moonbitlang/async/io" @io,
+  "moonbitlang/async/pipe" @pipe,
+}
+
+options(
+  "is-main": true,
+)

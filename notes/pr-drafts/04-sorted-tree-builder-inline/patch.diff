@@ -1,0 +1,61 @@
+diff --git a/immut/sorted_map/utils.mbt b/immut/sorted_map/utils.mbt
+index cde1e156..b524071b 100644
+--- a/immut/sorted_map/utils.mbt
++++ b/immut/sorted_map/utils.mbt
+@@ -68,14 +68,25 @@ pub fn[K, V] SortedMap::is_empty(self : SortedMap[K, V]) -> Bool {
+ }
+ 
+ ///|
++#inline
+ fn[K, V] make_tree(
+   key : K,
+   value : V,
+   l : SortedMap[K, V],
+   r : SortedMap[K, V],
+ ) -> SortedMap[K, V] {
+-  let size = l.length() + r.length() + 1
+-  Tree(key, value~, size~, l, r)
++  // Inline the size extraction so make_tree does a single match per child
++  // instead of going through SortedMap::length() (which is the same match
++  // but as a separate call). Hot during merge / balance recursion.
++  let ls = match l {
++    Empty => 0
++    Tree(_, size=s, _, _, ..) => s
++  }
++  let rs = match r {
++    Empty => 0
++    Tree(_, size=s, _, _, ..) => s
++  }
++  Tree(key, value~, size=ls + rs + 1, l, r)
+ }
+ 
+ ///|
+diff --git a/immut/sorted_set/immutable_set.mbt b/immut/sorted_set/immutable_set.mbt
+index 99986276..cefad21b 100644
+--- a/immut/sorted_set/immutable_set.mbt
++++ b/immut/sorted_set/immutable_set.mbt
+@@ -901,12 +901,23 @@ pub fn[A] SortedSet::length(self : SortedSet[A]) -> Int {
+ 
+ ///|
+ /// Creates a new node.
++#inline
+ fn[A] create(
+   left : SortedSet[A],
+   value : A,
+   right : SortedSet[A],
+ ) -> SortedSet[A] {
+-  Node(left~, right~, value~, size=left.length() + right.length() + 1)
++  // Inline size extraction: same shape as SortedSet::length() but avoids
++  // the function call. Hot during union / intersection / balance recursion.
++  let ls = match left {
++    Empty => 0
++    Node(size~, ..) => size
++  }
++  let rs = match right {
++    Empty => 0
++    Node(size~, ..) => size
++  }
++  Node(left~, right~, value~, size=ls + rs + 1)
+ }
+ 
+ ///|

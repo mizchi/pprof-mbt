@@ -1,0 +1,100 @@
+--- /root/.moon/lib/core/deque/deque.mbt	2026-05-22 05:42:49.000000000 +0000
++++ /tmp/moonbit-patched/lib/core/deque/deque.mbt	2026-05-22 23:48:29.796005051 +0000
+@@ -21,10 +21,30 @@
+ }
+ 
+ ///|
++/// Round `n` up to the next power of 2, with a floor of 8. Used to keep
++/// `buf.length()` always a power of 2 so the per-op modulo collapses to a
++/// bitmask.
++fn round_up_capacity(n : Int) -> Int {
++  if n <= 8 {
++    return 8
++  }
++  let mut x = n - 1
++  x = x | (x >> 1)
++  x = x | (x >> 2)
++  x = x | (x >> 4)
++  x = x | (x >> 8)
++  x = x | (x >> 16)
++  x + 1
++}
++
++///|
+ /// Computes the tail index (index of last element) on demand.
+-/// Only valid when len > 0.
++/// Only valid when len > 0. `buf.length()` is a power of 2 when non-zero
++/// (see `realloc` / `round_up_capacity`), so the modulo collapses to a
++/// bitmask.
++#inline
+ fn[A] Deque::tail_index(self : Deque[A]) -> Int {
+-  (self.head + self.len - 1) % self.buf.length()
++  (self.head + self.len - 1) & (self.buf.length() - 1)
+ }
+ 
+ ///|
+@@ -166,10 +186,11 @@
+ #as_free_fn(of, deprecated="Use from_array instead")
+ pub fn[A] Deque::Deque(arr : ArrayView[A], capacity? : Int) -> Deque[A] {
+   let len = arr.length()
+-  let capacity = match capacity {
++  let want = match capacity {
+     Some(capacity) => capacity.max(len)
+     None => len
+   }
++  let capacity = if want == 0 { 0 } else { round_up_capacity(want) }
+   let buf = UninitializedArray::make(capacity)
+   for i, x in arr {
+     buf[i] = x
+@@ -578,6 +599,7 @@
+ /// Reallocate the deque with a new capacity.
+ fn[A] Deque::realloc(self : Deque[A]) -> Unit {
+   let old_cap = self.buf.length()
++  // Always a power of 2: start at 8 then double.
+   let new_cap = if old_cap == 0 { 8 } else { old_cap * 2 }
+   let new_buf = UninitializedArray::make(new_cap)
+   self.unsafe_blit_to(new_buf, 0)
+@@ -638,8 +660,8 @@
+   if self.len == self.buf.length() {
+     self.realloc()
+   }
+-  let cap = self.buf.length()
+-  self.head = (self.head - 1 + cap) % cap
++  let mask = self.buf.length() - 1
++  self.head = (self.head - 1) & mask
+   self.buf[self.head] = value
+   self.len += 1
+ }
+@@ -661,8 +683,8 @@
+   if self.len == self.buf.length() {
+     self.realloc()
+   }
+-  let cap = self.buf.length()
+-  let write_idx = (self.head + self.len) % cap
++  let mask = self.buf.length() - 1
++  let write_idx = (self.head + self.len) & mask
+   self.buf[write_idx] = value
+   self.len += 1
+ }
+@@ -684,8 +706,8 @@
+ pub fn[A] Deque::unsafe_pop_front(self : Deque[A]) -> Unit {
+   guard self.len > 0 else { abort("The deque is empty!") }
+   set_null(self.buf, self.head)
+-  let cap = self.buf.length()
+-  self.head = (self.head + 1) % cap
++  let mask = self.buf.length() - 1
++  self.head = (self.head + 1) & mask
+   self.len -= 1
+ }
+ 
+@@ -776,8 +798,8 @@
+   guard self.len > 0 else { return None }
+   let value = self.buf[self.head]
+   set_null(self.buf, self.head)
+-  let cap = self.buf.length()
+-  self.head = (self.head + 1) % cap
++  let mask = self.buf.length() - 1
++  self.head = (self.head + 1) & mask
+   self.len -= 1
+   Some(value)
+ }

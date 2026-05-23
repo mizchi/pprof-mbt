@@ -1,0 +1,8 @@
+import {
+  "moonbitlang/async" @async,
+  "moonbitlang/async/cond_var" @cond_var,
+}
+
+options(
+  "is-main": true,
+)

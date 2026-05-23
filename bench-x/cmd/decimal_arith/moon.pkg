@@ -1,0 +1,7 @@
+import {
+  "moonbitlang/x/decimal" @decimal,
+}
+
+options(
+  "is-main": true,
+)
