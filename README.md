@@ -29,6 +29,7 @@ runners/                                CLI / binary
 ├── wasmtime-runner/                    Rust。wasm を wasmtime + GuestProfiler で実行 + pprof 化
 ├── pprof-summary/                      Rust。pprof を読んで self-time / mem-mgmt rollup, --diff
 ├── bench-runner/                       Rust。バックエンド横断ベンチ + baseline ↔ patched 表
+├── http-baseline-server/               Rust (axum + tokio)。bench-async の http server bench 用 baseline (:30003)
 ├── run-wasm-gc.mjs / run-js.mjs        Node V8 inspector
 ├── cpuprofile-to-pprof.mjs
 ├── samply-to-pprof.mjs
@@ -55,7 +56,7 @@ mkdir -p .bin
 
 # Rust: workspace 一括ビルド + .bin にコピー
 cargo build --workspace --release
-cp target/release/wasmtime-runner target/release/pprof-summary target/release/bench-runner .bin/
+cp target/release/wasmtime-runner target/release/pprof-summary target/release/bench-runner target/release/http-baseline-server .bin/
 
 # npm workspace は symlink 解決のみ
 npm install
