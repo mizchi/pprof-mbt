@@ -45,6 +45,7 @@ go tool pprof -http :8000 wasm-gc.pb.gz              # ブラウザで UI
 | サブコマンド | 用途 |
 |---|---|
 | `moon-pprof profile <wasm>` | wasm を `wasmtime + GuestProfiler` で実行 → pprof gzip |
+| `moon-pprof profile --wasm-gc <wasm>` | wasm-gc を同じ wasmtime 経路でプロファイル (V8 経由ではなく Cranelift baseline) |
 | `moon-pprof profile --no-profile <wasm>` | profile を切ってクリーンな wasm wall-time 計測 |
 | `moon-pprof summary <file>` | self-time / mem-mgmt rollup を Top-N 表示 |
 | `moon-pprof summary --diff <a> <b>` | 関数毎の改善 / 退行 / 出現 / 消失を Top-N で表示 |
@@ -101,7 +102,8 @@ cp -r /tmp/pprof-mbt-mooncakes/bench-x /tmp/pprof-mbt-mooncakes/bench-x.patched
 
 | backend | profile source | サンプル方式 | pprof 化 |
 |---------|---------------|---------|---------|
-| `wasm-gc` | Node inspector (V8) | V8 sampling | `cpuprofile-to-pprof.mjs` |
+| `wasm-gc` (default) | wasmtime `GuestProfiler` (Cranelift) | epoch tick sampling | `firefox-to-pprof` crate |
+| `wasm-gc` (`--via-v8`) | Node inspector (V8) | V8 sampling | `cpuprofile-to-pprof.mjs` |
 | `js`      | Node inspector (V8) | V8 sampling | `cpuprofile-to-pprof.mjs` |
 | `wasm`    | wasmtime `GuestProfiler` (Cranelift JIT) | epoch tick sampling | `firefox-to-pprof` crate / `wasmtime-to-pprof.mjs` |
 | `native`  | samply (Mach-O / ELF) | OS sampling | `samply-to-pprof.mjs` |
@@ -109,16 +111,35 @@ cp -r /tmp/pprof-mbt-mooncakes/bench-x /tmp/pprof-mbt-mooncakes/bench-x.patched
 どれもマングル名 (`_M0FP26mizchi5bench9ackermann` の類) を pprof に流し、
 共通の demangle で `mizchi::bench::ackermann` に戻す。
 
-### wasm-gc (V8 経由)
+### wasm-gc (wasmtime, default)
 
 ```sh
 npm run build:wasm-gc && npm run profile:wasm-gc
 ```
 
-`moon build --no-strip` で wasm に関数名を保持。`runners/run-wasm-gc.mjs`
-が `spectest.print_char` 等の moonbit host import を提供しつつ Node
-inspector の `Profiler.start`/`Profiler.stop` で V8 CPU profile を取得、
-`cpuprofile-to-pprof.mjs` で pprof protobuf に変換しつつ demangle。
+`moon build --no-strip --target=wasm-gc` で関数名を保持した wasm-gc を出し、
+`moon-pprof profile --wasm-gc` が wasmtime engine (`Config::wasm_gc(true)`
++ `wasm_function_references(true)` + `wasm_reference_types(true)`) で
+ロード → GuestProfiler で epoch tick サンプリング → pprof gzip に変換。
+`moonbit-wasm-host` crate が `spectest.print_char` / `wasi fd_write`
+host import を 1 行で登録する。
+
+V8 inline cache が乗った状態の wall time を測りたい場合は V8 経路も
+残してある:
+
+```sh
+npm run profile:wasm-gc:v8   # 旧 Node V8 inspector 経路 (比較用)
+# あるいは:
+.bin/moon-pprof bench --backends wasm-gc --wasm-gc-via-v8 ...
+```
+
+wasmtime (Cranelift baseline) と V8 (inline cache) では同じ wasm-gc
+バイナリでも自己時間の分布が変わる。 hot path のトポロジ (どの関数が
+重いか) はほぼ一致するが、絶対値や比率は別物として扱う。
+
+なお wasm-gc バックエンドの alloc は wasm の GC 命令 (`struct.new`
+等) で行われるため、`--mem-pattern` の mem-mgmt 分類は反応しない。
+GC オーバーヘッドを追いたい場合は別途 GC 命令ベースの計測が要る。
 
 ### js (Node)
 

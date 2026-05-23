@@ -61,6 +61,13 @@ pub struct Args {
     /// Build benches before running (set --build=false to reuse _build)
     #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
     pub build: bool,
+
+    /// Run wasm-gc benches through Node V8 (`runners/run-wasm-gc.mjs`)
+    /// instead of the default wasmtime + GuestProfiler path. Useful for
+    /// reproducing V8-side numbers; the wasmtime path gives denser
+    /// sampling and is the default.
+    #[arg(long)]
+    pub wasm_gc_via_v8: bool,
 }
 
 fn default_home(suffix: &str) -> String {
@@ -248,7 +255,13 @@ fn build_all(args: &Args, moon_root: &str, workloads: &[String], backends: &[Str
 fn run_once(args: &Args, workload: &str, backend: &str) -> Result<f64> {
     match backend {
         "wasm" => run_wasm(args, workload),
-        "wasm-gc" => run_wasm_gc(args, workload),
+        "wasm-gc" => {
+            if args.wasm_gc_via_v8 {
+                run_wasm_gc_v8(args, workload)
+            } else {
+                run_wasm_gc(args, workload)
+            }
+        }
         "js" => run_js(args, workload),
         "native" => run_native(args, workload),
         other => Err(anyhow!("unknown backend {:?}", other)),
@@ -301,15 +314,49 @@ fn run_wasm(args: &Args, w: &str) -> Result<f64> {
     parse_ms(&combined)
 }
 
-fn run_wasm_gc(args: &Args, w: &str) -> Result<f64> {
-    let path = PathBuf::from(&args.bench_dir)
+fn wasm_gc_path(args: &Args, w: &str) -> PathBuf {
+    PathBuf::from(&args.bench_dir)
         .join("_build")
         .join("wasm-gc")
         .join("release")
         .join("build")
         .join("cmd")
         .join(w)
-        .join(format!("{}.wasm", w));
+        .join(format!("{}.wasm", w))
+}
+
+/// Default wasm-gc path: spawn `moon-pprof profile --no-profile --wasm-gc`
+/// (wasmtime + Cranelift). No Node dependency.
+fn run_wasm_gc(args: &Args, w: &str) -> Result<f64> {
+    let path = wasm_gc_path(args, w);
+    let bin = self_path()?;
+    let out = Command::new(&bin)
+        .args(["profile", "--no-profile", "--wasm-gc"])
+        .arg(&path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()?;
+    if !out.status.success() {
+        bail!(
+            "moon-pprof profile --wasm-gc {:?}: {}\n{}{}",
+            path,
+            out.status,
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    parse_ms(&combined)
+}
+
+/// Legacy wasm-gc path: spawn Node `runners/run-wasm-gc.mjs --no-profile`
+/// (V8). Kept behind --wasm-gc-via-v8 for reproducing V8-side numbers.
+fn run_wasm_gc_v8(args: &Args, w: &str) -> Result<f64> {
+    let path = wasm_gc_path(args, w);
     let script = PathBuf::from(&args.runner_dir).join("run-wasm-gc.mjs");
     let out = Command::new("node")
         .arg(&script)

@@ -41,6 +41,12 @@ pub struct Args {
     /// wall-time measurements without the ~10-15% sampling overhead.
     #[arg(long)]
     pub no_profile: bool,
+    /// Enable wasm-gc proposal (typed refs, struct/array, i31ref) on
+    /// the wasmtime engine. Required for profiling MoonBit's
+    /// `--target=wasm-gc` output. The legacy `--target=wasm` output
+    /// does not need this flag.
+    #[arg(long)]
+    pub wasm_gc: bool,
 }
 
 struct HostState {
@@ -76,6 +82,13 @@ pub fn run(args: Args) -> Result<()> {
     }
     config.cranelift_opt_level(wasmtime::OptLevel::Speed);
     config.generate_address_map(true);
+    if args.wasm_gc {
+        // wasm-gc requires function-references and reference-types as
+        // prerequisites (the spec layers them).
+        config.wasm_reference_types(true);
+        config.wasm_function_references(true);
+        config.wasm_gc(true);
+    }
     // ackermann(3, 10) recurses ~16k deep — moonbit emits >32 bytes/frame so
     // the default 512 KiB wasm stack overflows. Bump both wasm + host caps.
     config.async_stack_size(16 * 1024 * 1024);
