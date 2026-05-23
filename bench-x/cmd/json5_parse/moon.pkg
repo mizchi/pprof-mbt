@@ -1,0 +1,7 @@
+import {
+  "moonbitlang/x/json5" @json5,
+}
+
+options(
+  "is-main": true,
+)

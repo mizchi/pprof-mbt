@@ -1,0 +1,35 @@
+From d67f0abd5e2687a0f8ade3122d26a77b6b738ec2 Mon Sep 17 00:00:00 2001
+From: bench <bench@example.com>
+Date: Sat, 23 May 2026 06:08:40 +0000
+Subject: [PATCH] perf(json5): pass StringView to parse_double, materialize
+ owned String only on error
+
+---
+ json5/lex_number.mbt | 12 +++++++++---
+ 1 file changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/json5/lex_number.mbt b/json5/lex_number.mbt
+index 4bf4069..18be2dd 100644
+--- a/json5/lex_number.mbt
++++ b/json5/lex_number.mbt
+@@ -49,8 +49,14 @@ fn lex_number_end(
+   start : Int,
+   end : Int,
+ ) -> Double raise ParseError {
+-  let s = ctx.input[start:end].to_owned()
+-  @string.parse_double(s) catch {
+-    _ => parse_error(InvalidNumber(offset_to_position(ctx.input, start), s))
++  // parse_double already accepts a StringView; only materialize an
++  // owned String for the error payload (the cold path). Saves one
++  // allocation + memcpy per number on the happy path.
++  let view = ctx.input[start:end]
++  @string.parse_double(view) catch {
++    _ =>
++      parse_error(
++        InvalidNumber(offset_to_position(ctx.input, start), view.to_string()),
++      )
+   }
+ }
+-- 
+2.43.0
+
