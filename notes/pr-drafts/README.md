@@ -17,12 +17,13 @@ notes/pr-drafts/<NN-name>/
 
 ## 一覧
 
-| # | ブランチ名 | 主な効果 | 行数 |
-|---|---|---|--:|
-| 01 | `pr-bigint-mul-single-limb` | factorial 3× 高速化 | +31/-1 |
-| 02 | `pr-hashmap-grow-rehash` | hashmap/hashset/builtin Map grow を -15〜-24% | +93/-15 |
-| 03 | `pr-json-safe-int-reuse` | json_numbers js -27% / wasm-gc -9.5% | +8/-0 |
-| 04 | `pr-sorted-tree-builder-inline` | immut sorted_{map,set} wasm -7〜-9% | +25/-3 |
+| # | ブランチ名 / Issue | 主な効果 | 行数 | 種類 |
+|---|---|---|--:|---|
+| 01 | `pr-bigint-mul-single-limb` | factorial 3× 高速化 | +31/-1 | PR |
+| 02 | `pr-hashmap-grow-rehash` | hashmap/hashset/builtin Map grow を -15〜-24% | +93/-15 | PR |
+| 03 | `pr-json-safe-int-reuse` | json_numbers js -27% / wasm-gc -9.5% | +8/-0 | PR |
+| 04 | `pr-sorted-tree-builder-inline` | immut sorted_{map,set} wasm -7〜-9% | +25/-3 | PR |
+| 05 | `issue-deque-pow2` | deque mod→bitmask、API 契約議論 | ~100 (参考) | Issue 先行 |
 
 ## 出し方 (前提: moonbitlang/core を fork してある)
 
@@ -66,6 +67,8 @@ gh pr create \
 3. PR-01/02 が merge に近づいたら **PR-03 json** と **PR-04 sorted**。
 4. PR-04 は sorted_set の open PR 群 (#3324, #3333, #3315) と rebase
    が衝突する可能性 — 該当 PR の merge を待つ or 先方に rebase 依頼。
+5. **Issue-05 deque** は別途、PR ではなく **Issue として議論先行**で。
+   `Deque::capacity()` の public 契約変更が要るので合意を取ってから patch を出す。
 
 ## 元の調査ログ
 

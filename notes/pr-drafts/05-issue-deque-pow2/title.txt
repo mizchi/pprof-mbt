@@ -1,0 +1,1 @@
+[RFC] Deque: round capacity up to power of two so % cap can become & (cap - 1)
