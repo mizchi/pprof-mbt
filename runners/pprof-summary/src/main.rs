@@ -26,12 +26,11 @@ use regex::Regex;
 
 /// Symbols MoonBit emits for refcount and allocator primitives across all
 /// three backends. Tuned against json_parse / sorted_map_merge / regex_match
-/// outputs.
-fn mem_mgmt_re() -> Regex {
-    Regex::new(
-        r"^(moonbit\.(incref|decref|gc\.malloc|gc\.free|malloc|free|make_array_header|get_tag|array_length|check_range|drop_object)|tlsf/.+|moonbit_drop_object|libc_(malloc|free)|moonbit_malloc|moonbit_decref|moonbit_incref|_(?:malloc|free)|libsystem_malloc\..*)$",
-    )
-    .unwrap()
+/// outputs. Used as the default for `--mem-pattern`.
+const DEFAULT_MEM_PATTERN: &str = r"^(moonbit\.(incref|decref|gc\.malloc|gc\.free|malloc|free|make_array_header|get_tag|array_length|check_range|drop_object)|tlsf/.+|moonbit_drop_object|libc_(malloc|free)|moonbit_malloc|moonbit_decref|moonbit_incref|_(?:malloc|free)|libsystem_malloc\..*)$";
+
+fn mem_mgmt_re(pattern: &str) -> Result<Regex> {
+    Regex::new(pattern).with_context(|| format!("compile --mem-pattern regex: {}", pattern))
 }
 
 /// Sample value index + unit (ns/us/ms/samples) + divisor to convert to ms
@@ -126,9 +125,8 @@ fn load_profile(path: &str) -> Result<Profile> {
     Profile::decode(&*buf).context("decode pprof protobuf")
 }
 
-fn compute_summary(p: &Profile) -> Summary {
+fn compute_summary(p: &Profile, mem_mgmt: &Regex) -> Summary {
     let axis = value_axis(p);
-    let mem_mgmt = mem_mgmt_re();
     let loc_to_name = resolve_top_lines(p);
     let mut stats: HashMap<String, FuncStats> = HashMap::new();
     let mut total: i64 = 0;
@@ -221,10 +219,10 @@ fn print_top(
     println!();
 }
 
-fn run_single(path: &str) -> Result<()> {
+fn run_single(path: &str, mem_pattern: &str) -> Result<()> {
     let p = load_profile(path)?;
-    let s = compute_summary(&p);
-    let mem_mgmt = mem_mgmt_re();
+    let mem_mgmt = mem_mgmt_re(mem_pattern)?;
+    let s = compute_summary(&p, &mem_mgmt);
 
     println!("Profile: {}", path);
     println!(
@@ -285,11 +283,12 @@ fn run_single(path: &str) -> Result<()> {
     Ok(())
 }
 
-fn run_diff(base_path: &str, patched_path: &str) -> Result<()> {
+fn run_diff(base_path: &str, patched_path: &str, mem_pattern: &str) -> Result<()> {
     let base = load_profile(base_path)?;
     let patched = load_profile(patched_path)?;
-    let bs = compute_summary(&base);
-    let ps = compute_summary(&patched);
+    let mem_mgmt = mem_mgmt_re(mem_pattern)?;
+    let bs = compute_summary(&base, &mem_mgmt);
+    let ps = compute_summary(&patched, &mem_mgmt);
 
     if bs.axis.unit != ps.axis.unit || bs.axis.div != ps.axis.div {
         return Err(anyhow!(
@@ -440,8 +439,12 @@ fn print_appeared_rows(
 
 fn usage() -> ExitCode {
     eprintln!("usage:");
-    eprintln!("  pprof-summary <profile.pb.gz>");
-    eprintln!("  pprof-summary --diff <base.pb.gz> <patched.pb.gz>");
+    eprintln!("  pprof-summary [--mem-pattern <regex>] <profile.pb.gz>");
+    eprintln!("  pprof-summary [--mem-pattern <regex>] --diff <base.pb.gz> <patched.pb.gz>");
+    eprintln!();
+    eprintln!("--mem-pattern is the regex matched against function names to classify");
+    eprintln!("memory-management primitives in the rollup. Default is tuned for MoonBit.");
+    eprintln!("Also reads PPROF_SUMMARY_MEM_PATTERN env var if --mem-pattern is unset.");
     ExitCode::from(2)
 }
 
@@ -455,17 +458,24 @@ fn main() -> ExitCode {
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
+    let argv: Vec<String> = env::args().collect();
+    let (positional, mem_pattern) = match split_flags(&argv[1..]) {
+        Ok(x) => x,
+        Err(e) => {
+            eprintln!("{}", e);
+            return ExitCode::from(2);
+        }
+    };
+    if positional.is_empty() {
         return usage();
     }
-    match args[1].as_str() {
+    match positional[0].as_str() {
         "-h" | "--help" | "help" => usage(),
         "--diff" | "-d" | "diff" => {
-            if args.len() != 4 {
+            if positional.len() != 3 {
                 return usage();
             }
-            match run_diff(&args[2], &args[3]) {
+            match run_diff(&positional[1], &positional[2], &mem_pattern) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
                     eprintln!("diff: {:#}", e);
@@ -473,12 +483,46 @@ fn main() -> ExitCode {
                 }
             }
         }
-        path => match run_single(path) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(e) => {
-                eprintln!("{:#}", e);
-                ExitCode::FAILURE
+        path => {
+            if positional.len() != 1 {
+                return usage();
             }
-        },
+            match run_single(path, &mem_pattern) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!("{:#}", e);
+                    ExitCode::FAILURE
+                }
+            }
+        }
     }
+}
+
+/// Pull `--mem-pattern <regex>` (or `--mem-pattern=<regex>`) out of argv;
+/// fall back to `$PPROF_SUMMARY_MEM_PATTERN`; finally `DEFAULT_MEM_PATTERN`.
+/// Returns (remaining positional args, regex string).
+fn split_flags(args: &[String]) -> Result<(Vec<String>, String), String> {
+    let mut positional = Vec::with_capacity(args.len());
+    let mut mem_pattern: Option<String> = None;
+    let mut i = 0;
+    while i < args.len() {
+        let a = &args[i];
+        if let Some(rest) = a.strip_prefix("--mem-pattern=") {
+            mem_pattern = Some(rest.to_string());
+            i += 1;
+        } else if a == "--mem-pattern" {
+            if i + 1 >= args.len() {
+                return Err("--mem-pattern needs a value".into());
+            }
+            mem_pattern = Some(args[i + 1].clone());
+            i += 2;
+        } else {
+            positional.push(a.clone());
+            i += 1;
+        }
+    }
+    let pat = mem_pattern
+        .or_else(|| env::var("PPROF_SUMMARY_MEM_PATTERN").ok())
+        .unwrap_or_else(|| DEFAULT_MEM_PATTERN.to_string());
+    Ok((positional, pat))
 }
