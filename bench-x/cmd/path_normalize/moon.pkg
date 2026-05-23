@@ -1,0 +1,7 @@
+import {
+  "moonbitlang/x/path" @path,
+}
+
+options(
+  "is-main": true,
+)

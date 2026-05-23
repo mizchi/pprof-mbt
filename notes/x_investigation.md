@@ -92,6 +92,49 @@ ways, md5 220ms both ways, chacha20 109→106ms which is noise). moonc
 apparently compiles both sequences to the same machine code. Same
 lesson as the earlier Hasher `#inline` experiment on core. **Dropped**.
 
+### ✅ `uuid/uuid.mbt` to_string in-place reinterpret (PR-04, largest win)
+
+`UUID::to_string` builds the hex representation into a `FixedArray[Byte]`
+of size 72, then does:
+
+```moonbit
+Bytes::from_array(Array::from_fixed_array(rv)).to_unchecked_string()
+```
+
+Two unnecessary copies. The FixedArray already *is* the UTF-16 byte
+buffer. Replace with `rv.unsafe_reinterpret_as_bytes().to_unchecked_string()`.
+
+|             | baseline | patched | delta   |
+|-------------|---------:|--------:|--------:|
+| uuid_parse  |  549 ms  | 197 ms  | **-64.1%** |
+
+9/9 uuid tests pass. **Single largest win across all three repos.**
+
+### ✅ `encoding/encoding.mbt` UTF-8 code-unit walk (PR-03)
+
+`encoding::encode(UTF8, ...)` had `for char in src` over `String`,
+which iterates by Char (with surrogate decode per char). Replaced
+with an explicit `while i < len` walk over UTF-16 code units that
+assembles surrogate pairs inline.
+
+|                | baseline | patched | delta   |
+|----------------|---------:|--------:|--------:|
+| encoding_utf8  |  528 ms  | 408 ms  | **-22.7%** |
+
+71/71 encoding tests pass.
+
+### ✅ Cross-repo cascade: `moonbitlang/core` PR-01 helps `moonbitlang/x/decimal`
+
+`decimal_arith` (factorial-style `acc * Decimal::from_int(i)`) is 90.78%
+in `BigInt::grade_school_mul`. With our pending `moonbitlang/core`
+PR-01 (`bigint mul_single_limb`) applied — no x-side change at all —
+the same bench drops from **170 ms to 47 ms (-72%)**. The decimal value
+holds a `BigInt` coefficient + a scale, so each step is exactly the
+(n-limb) × (1-limb) pattern PR-01 specialized for.
+
+This makes core PR-01 a stronger PR (it doesn't just help bigint
+benches; it cascades into x/decimal users).
+
 ### ✅ `codec/base64/base64.mbt` index-based loop (PR-02)
 
 Both `Encoder::encode_to` and `Decoder::decode_to` walked their inputs

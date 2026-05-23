@@ -1,0 +1,7 @@
+import {
+  "moonbitlang/x/uuid" @uuid,
+}
+
+options(
+  "is-main": true,
+)
