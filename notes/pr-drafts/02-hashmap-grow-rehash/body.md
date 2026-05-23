@@ -1,13 +1,13 @@
 ## Summary
 
-`HashMap::grow`, `HashSet::grow`, and builtin `Map::grow` currently rehash entries by re-calling the public `set_with_hash` / `add_with_hash` path. Inside that path two checks are dead weight during a rehash:
+`HashMap::grow`, `HashSet::grow`, builtin `Map::grow`, and `Set::grow` (the linked hash set in `core/set`) currently rehash entries by re-calling the public `set_with_hash` / `add_with_hash` path. Inside that path two checks are dead weight during a rehash:
 
 1. The **key equality check** (`curr_entry.hash == hash && curr_entry.key == key`) — the entries being re-inserted came from an old table where they were already unique by construction, so this can never match.
 2. The **load-factor / `grow_at` check** — the capacity just doubled, so the load factor is 50% by construction and no further grow is needed.
 
-Replace each of the three growth helpers with a specialized Robin-Hood swap loop that skips both checks. This also lets the function drop the `Eq` constraint that was only needed for the (never-firing) equality check.
+Replace each of the four growth helpers with a specialized Robin-Hood swap loop that skips both checks. This also lets each function drop the `Eq` constraint that was only needed for the (never-firing) equality check.
 
-For builtin `Map` (the linked hash map used by `@json`) the change is slightly more careful: it has to preserve the `prev` / `next` linked-list invariants, so it keeps calling `add_entry_to_tail` / `push_away` rather than inlining a fresh probe.
+For builtin `Map` (the linked hash map used by `@json`) and `core/set::Set` (also a linked hash set, used heavily by `moonbitlang/async`'s `TaskGroup.downstream`) the change preserves the `prev` / `next` linked-list invariants by reusing the existing `add_entry_to_tail` / `push_away` helpers rather than inlining a fresh probe.
 
 ## Benchmarks
 

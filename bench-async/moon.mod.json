@@ -1,0 +1,8 @@
+{
+  "name": "mizchi/bench-async",
+  "version": "0.1.0",
+  "deps": {
+    "moonbitlang/async": "0.19.1"
+  },
+  "license": "Apache-2.0"
+}

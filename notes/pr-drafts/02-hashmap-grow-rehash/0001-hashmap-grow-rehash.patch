@@ -1,4 +1,4 @@
-From ab26ee7e514c42740b94686f8b11f3a43bfbba16 Mon Sep 17 00:00:00 2001
+From de476941000290944fb18ec98b0d50abd41abe28 Mon Sep 17 00:00:00 2001
 From: bench <bench@example.com>
 Date: Sat, 23 May 2026 03:59:46 +0000
 Subject: [PATCH] perf(hashmap,hashset,builtin): skip Eq and load-factor checks
@@ -8,7 +8,8 @@ Subject: [PATCH] perf(hashmap,hashset,builtin): skip Eq and load-factor checks
  builtin/linked_hash_map.mbt | 42 ++++++++++++++++++++++++++++++++-----
  hashmap/hashmap.mbt         | 32 +++++++++++++++++++++++-----
  hashset/hashset.mbt         | 31 ++++++++++++++++++++++-----
- 3 files changed, 90 insertions(+), 15 deletions(-)
+ set/linked_hash_set.mbt     | 42 ++++++++++++++++++++++++++++++++-----
+ 4 files changed, 127 insertions(+), 20 deletions(-)
 
 diff --git a/builtin/linked_hash_map.mbt b/builtin/linked_hash_map.mbt
 index 42b0fe47..ffe846b7 100644
@@ -167,6 +168,67 @@ index e524e4d8..956fcf71 100644
 +            }
 +        }
 +      }
+     }
+   }
+ }
+diff --git a/set/linked_hash_set.mbt b/set/linked_hash_set.mbt
+index a3479d41..c1bc7966 100644
+--- a/set/linked_hash_set.mbt
++++ b/set/linked_hash_set.mbt
+@@ -374,7 +374,7 @@ fn[K] Set::shift_back(self : Set[K], idx : Int) -> Unit {
+ }
+ 
+ ///|
+-fn[K : Eq] Set::grow(self : Set[K]) -> Unit {
++fn[K] Set::grow(self : Set[K]) -> Unit {
+   let old_head = self.head
+   let new_capacity = self.capacity << 1
+   self.entries = FixedArray::make(new_capacity, None)
+@@ -386,11 +386,43 @@ fn[K : Eq] Set::grow(self : Set[K]) -> Unit {
+   self.tail = -1
+   for x = old_head {
+     match x {
+-      Some({ next, key, hash, .. }) => {
+-        self.add_with_hash(key, hash)
+-        continue next
+-      }
+       None => break
++      Some(e) => {
++        let next_in_chain = e.next
++        // Reset LL fields; rehash_place_entry fills them.
++        e.next = None
++        self.rehash_place_entry(e)
++        continue next_in_chain
++      }
++    }
++  }
++}
++
++///|
++/// Place an existing entry into the (already-resized) table. Like
++/// `add_with_hash` but skips the key equality check (entries from the
++/// old table are unique) and the load-factor check (we just doubled
++/// capacity).
++fn[K] Set::rehash_place_entry(self : Set[K], outer : Entry[K]) -> Unit {
++  let hash = outer.hash
++  for psl = 0, idx = hash & self.capacity_mask {
++    match self.entries[idx] {
++      None => {
++        outer.psl = psl
++        outer.prev = self.tail
++        self.add_entry_to_tail(idx, outer)
++        return
++      }
++      Some(curr) =>
++        if psl > curr.psl {
++          self.push_away(idx, curr)
++          outer.psl = psl
++          outer.prev = self.tail
++          self.add_entry_to_tail(idx, outer)
++          return
++        } else {
++          continue psl + 1, (idx + 1) & self.capacity_mask
++        }
      }
    }
  }
