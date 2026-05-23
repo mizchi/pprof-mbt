@@ -202,7 +202,7 @@ assert_eq!(demangle("_M0FP26mizchi5bench9ackermann"), "mizchi::bench::ackermann"
 import {
   moonbitWasmImports,
   autoStubMissing,
-} from "@mizchi/pprof-tools/moonbit/wasm-host-imports";
+} from "@mizchi/moonbit-wasm-host";
 ```
 
 > pprof 変換系 (`cpuprofile-to-pprof` / `firefox-to-pprof` /
@@ -276,7 +276,7 @@ crates/                                 公開ライブラリ (Rust)
 └── wasmtime-guest-pprof/               wasmtime GuestProfiler 駆動 + pprof (汎用)
 
 packages/                               公開ライブラリ (npm)
-└── pprof-tools/                        @mizchi/pprof-tools (moonbit wasm host imports のみ)
+└── moonbit-wasm-host/                  @mizchi/moonbit-wasm-host (Node V8 で moonbit wasm を動かすときの host import)
 
 runners/                                CLI / binary
 ├── moon-pprof/                         Rust。統合 CLI

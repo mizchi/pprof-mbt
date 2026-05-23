@@ -1,0 +1,27 @@
+{
+  "name": "@mizchi/moonbit-wasm-host",
+  "version": "0.1.0",
+  "description": "Host imports for running MoonBit-compiled wasm-gc / wasm guests under Node (V8). Mirrors moonrun: spectest.print_char (UTF-16 line buffering), __moonbit_sys_unstable.is_windows, and a minimal WASI fd_write. autoStubMissing injects noop bindings for any imports the module declares without bindings.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mizchi/pprof-mbt.git",
+    "directory": "packages/moonbit-wasm-host"
+  },
+  "keywords": [
+    "moonbit",
+    "wasm",
+    "wasm-gc",
+    "wasi",
+    "host-imports"
+  ],
+  "main": "./index.mjs",
+  "exports": {
+    ".": "./index.mjs"
+  },
+  "files": [
+    "index.mjs",
+    "README.md"
+  ]
+}

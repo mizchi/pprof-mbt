@@ -3,17 +3,13 @@
 // — useful for clean wall-time measurements without the inspector
 // overhead.
 //
-// The host imports themselves live in
-// `@mizchi/pprof-tools/moonbit/wasm-host-imports` so non-moonbit consumers can swap
-// in their own.
+// The host imports themselves live in `@mizchi/moonbit-wasm-host` so
+// non-moonbit consumers can swap in their own.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { Session } from "node:inspector/promises";
 import { argv } from "node:process";
-import {
-  moonbitWasmImports,
-  autoStubMissing,
-} from "@mizchi/pprof-tools/moonbit/wasm-host-imports";
+import { moonbitWasmImports, autoStubMissing } from "@mizchi/moonbit-wasm-host";
 
 // Strip --no-profile from argv first so positional indices stay stable.
 const positional = argv.slice(2).filter((a) => a !== "--no-profile");
