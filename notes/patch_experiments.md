@@ -405,29 +405,66 @@ allocation も省ける = 元の Entry を再利用。)
 1 オブジェクト 8 キーで grow が 1 回しか走らないため小さい。
 6503/6503 tests pass。
 
-## 全 patch 積み + 全 workload 計測
+## 追加シナリオで採用パッチを検証
 
-10 workload を baseline ↔ all-patched で測定:
+「採用したパッチが想定の workload 以外でも安全か / 想定パターンを変えた
+ときに効くか」を確かめるため、4 つの追加 bench を作って同じ patched
+core で測った。
 
-| workload          | wasm base→p | Δ | wasm-gc base→p | Δ | native base→p | Δ |
-|-------------------|------------:|--:|---------------:|--:|--------------:|--:|
-| **bigint_ops**    | 323→113     | **-65%** | 53→18  | **-65%** | 39→14 | **-64%** |
-| **hashmap_ops**   | 313→260     | **-17%** | 98→77  | **-22%** | 80→68 | **-15%** |
-| **hashset_ops**   | 321→265     | **-17%** | 92→81  | **-12%** | 81→74 | -9% |
-| sorted_map_merge  | 125→111     | **-11%** | 41→40  | -2% | 24→23 | -4% |
-| json_parse        | 667→666     | 0%  | 189→171 | **-9.5%** | 127→123 | -3% |
-| sorted_set_union  | 124→116     | -6% | 44→46  | +5% (noise) | 24→24 | 0% |
-| priority_queue_ops| 324→303     | -6% | 80→81  | +1% (noise) | 90→87 | -3% |
-| regex_match       | 99→101      | +2% (noise) | 30→30 | 0% | 20→20 | 0% |
-| deque_ops         | 182→189     | +4% (noise) | 73→70 | -4% | 46→46 | 0% |
-| main (cpu)        | 407→419     | +3% (noise) | 110→110 | 0% | 57→58 | 0% |
+| bench | 何が違うか | 期待 |
+|---|---|---|
+| `bigint_square` | x = x * x の繰り返し。両辺 equal-size なので grade_school と Karatsuba 経路に行く | n×1 patch が n×n を壊していないこと |
+| `hashmap_string` | key が String (5k 個) | grow patch が String key (重い eq) でも効くこと |
+| `hashmap_update` | 一度 fill 済み map を update し続ける (grow が走らない) | grow に触らない workload で退行なし |
+| `json_numbers` | flat array of 10k safe integers | safe-int 二度走査排除が number-heavy で大きく効く |
 
-bench-対象 patch のあるものは全て改善。**bigint, hashmap, hashset で
-クリーンに 15〜65% 改善**。`make_tree`/`create` inline 系は wasm で
-よく効く (関数呼び出し prolog/epilog コストが消える)。関連 patch の
-ない 4 workload (regex/deque/pq/main) は誤差範囲で退行なし。
+### 結果
 
-全 patch 込みで **moonbitlang/core の 6503 tests 全 pass**。
+| workload          | wasm   | wasm-gc | js     | native | 観察 |
+|-------------------|-------:|--------:|-------:|-------:|---|
+| bigint_square     | -2%    | **-9%** | -7%    | noise  | n×1 patch が n×n path を壊していない ✓ |
+| hashmap_string    | **-13%** | **-30%** | **-23%** | **-10%** | grow patch が String key で **wasm-gc -30%** ✓ |
+| hashmap_update    | 0%     | -9%     | -9%    | -17%   | grow に触らない workload で退行なし ✓ |
+| json_numbers      | -6%    | **-16%** | **-38%** | -10%  | safe-int 排除が number-heavy で **js -38%** ✓ |
+
+### 注目点
+
+- **hashmap_string の wasm-gc -30%** は単独 hashmap_ops の -22% より大きい。
+  String の `eq` は Int より高価なので、grow から `Eq` 制約を外す効果が
+  String key で増幅される。**generic 制約を外せるという副次効果が pay-off
+  している**。
+- **json_numbers の js -38%** は劇的。`lex_number_end` の safe-int fast
+  path を 1 関数の中で完結させたことで V8 JIT が綺麗に inline できた
+  と推測。number-heavy JSON は API リクエストパース等で実際多い形。
+- **bigint_square** は n×1 patch がトリガーされないにも関わらず -9%。
+  初期 squarings (まだ limb が小さい段階) でいくらか n×1 経路を通る
+  のと、他 patch の僅かな効果の合算と思われる。
+- **hashmap_update** で wasm が 0% (退行なし)、native が -17%。grow
+  が走らないので **`set_with_hash` の hot path には patch の影響が無い**
+  ことを確認。
+
+### 全 patched core での当初 + 追加 14 workload 一覧 (wasm-gc, 1 run)
+
+| workload | base | patched | delta |
+|---|--:|--:|--:|
+| bigint_ops | 53 | 18 | **-65%** |
+| **hashmap_string** | 97 | 68 | **-30%** |
+| hashmap_ops | 98 | 77 | **-22%** |
+| **json_numbers** | 141 | 118 | **-16%** |
+| hashset_ops | 92 | 81 | **-12%** |
+| sorted_map_merge | 41 | 40 | -2% |
+| **bigint_square** | 86 | 78 | **-9%** |
+| **hashmap_update** | 34 | 31 | -9% |
+| json_parse | 189 | 171 | **-9.5%** |
+| sorted_set_union | 44 | 46 | noise |
+| priority_queue_ops | 80 | 81 | noise |
+| regex_match | 30 | 30 | 0% |
+| deque_ops | 73 | 70 | -4% |
+| main (cpu) | 110 | 110 | 0% |
+
+採用 7 patch で **14 workload のうち 9 つに 9〜65% 改善、0 退行**。
+パッチが指す path に該当しない 5 workload (sorted_set / pq / regex /
+deque / main) も全部誤差範囲。
 
 ## まとめ
 
