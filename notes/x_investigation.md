@@ -183,7 +183,9 @@ Result on `bench-x/cmd/path_normalize` (`normalize` + `dirname` +
 | path_normalize |  282 ms  | 209 ms  | **-25.9%** |
 
 Callgrind: 3.73 G → 2.71 G Ir (-27.4%). `blit_from_string` falls from
-15.19% to 8.99%. 38/38 `moonbitlang/x/path/posix` tests pass on upstream
+15.19% to 8.99%. Same pattern in `path/win32/win_path.mbt`'s
+`WinPath::output` — fixed identically in the same patch. 38/38
+`moonbitlang/x/path/posix` + 50/50 `path/win32` tests pass on upstream
 main.
 
 ### ✅ `json5/lex_number.mbt` lazy `to_string` (PR-01)

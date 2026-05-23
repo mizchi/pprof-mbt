@@ -14,6 +14,8 @@ where `x` is a `StringView`. The `to_owned()` step copies the StringView into a 
 logger.write_view(x)
 ```
 
+The same pattern appears in `path/win32/win_path.mbt`'s `WinPath::output` (writes each component as `write_string(component.to_owned())`); fixed identically in this patch.
+
 ## Why this is hot
 
 `Path::normalize(p)` is `UnixPath::parse(p.0).to_string()` — so every normalize call goes through `Show::output` and pays the per-component copy cost. On a realistic path with ~5–10 components the redundant work adds up fast.
@@ -32,6 +34,7 @@ Callgrind total instructions: 3.73 G → 2.71 G (**-27.4%**). `FixedArray::blit_
 
 ```
 moonbitlang/x/path/posix    38 / 38 pass
+moonbitlang/x/path/win32    50 / 50 pass
 ```
 
 Applied to `moonbitlang/x` `main`.

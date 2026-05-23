@@ -1,0 +1,1 @@
+perf(path): write StringView components via write_view instead of copying to_owned
