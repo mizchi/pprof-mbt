@@ -1,0 +1,1 @@
+perf(json): reuse scan_json_number mantissa for safe integers

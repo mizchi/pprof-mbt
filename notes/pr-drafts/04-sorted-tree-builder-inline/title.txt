@@ -1,0 +1,1 @@
+perf(immut): inline size extraction in sorted_map / sorted_set tree builders
