@@ -5,9 +5,7 @@ members = [
     "crates/moonbit-wasm-host",
     "crates/firefox-to-pprof",
     "crates/wasmtime-guest-pprof",
-    "runners/wasmtime-runner",
-    "runners/pprof-summary",
-    "runners/bench-runner",
+    "runners/moon-pprof",
     "runners/http-baseline-server",
 ]
 

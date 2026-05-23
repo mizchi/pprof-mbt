@@ -1,16 +1,11 @@
-// wasmtime-runner: profile a moonbit wasm (non-gc target) with wasmtime's
-// GuestProfiler and write the result as gzip'd pprof.
-//
-// The work is split across workspace crates so each piece can be reused
-// in isolation:
-//   - wasmtime-guest-pprof: GuestProfiler driving + pprof emission (generic)
-//   - firefox-to-pprof:     the Firefox JSON → pprof conversion (generic)
-//   - moonbit-demangle:     symbol demangling (MoonBit-specific)
-//   - moonbit-wasm-host:    spectest.print_char + wasi fd_write host imports
-//                           that satisfy a MoonBit wasm guest's println
-//                           surface (MoonBit-specific)
-//
-// This file is just the CLI gluing them together.
+//! `moon-pprof profile <wasm>` — profile a MoonBit wasm binary via
+//! wasmtime's GuestProfiler and write the result as gzip'd pprof.
+//!
+//! Composes:
+//!   - wasmtime-guest-pprof: GuestProfiler + pprof emission (generic)
+//!   - firefox-to-pprof:     Firefox JSON → pprof (generic)
+//!   - moonbit-demangle:     symbol demangling (MoonBit-specific)
+//!   - moonbit-wasm-host:    spectest.print_char + wasi fd_write host imports
 
 use std::fs;
 use std::path::PathBuf;
@@ -21,36 +16,33 @@ use clap::Parser;
 use moonbit_wasm_host::{MoonbitStdio, MoonbitStdioState};
 use wasmtime::{Config, Engine, Linker, Module, Store};
 use wasmtime_guest_pprof::{
-    json_to_pprof, ProfileSession, ProfilerHost, ProfilerHostExt as _, TakeProfileSession,
+    ProfileSession, ProfilerHost, ProfilerHostExt as _, TakeProfileSession, json_to_pprof,
 };
 
 #[derive(Parser, Debug)]
-#[command(about = "Profile a moonbit wasm with wasmtime's guest profiler")]
-struct Args {
+#[command(about = "Profile a MoonBit wasm with wasmtime's guest profiler")]
+pub struct Args {
     /// Path to the .wasm file
-    wasm: PathBuf,
+    pub wasm: PathBuf,
     /// Output path for the gzip'd pprof
     #[arg(long, default_value = "wasmtime-guest.pb.gz")]
-    out: PathBuf,
+    pub out: PathBuf,
     /// If set, also write the Firefox Profiler JSON to this path
     #[arg(long)]
-    json_out: Option<PathBuf>,
+    pub json_out: Option<PathBuf>,
     /// Sampling interval in microseconds
     #[arg(long, default_value_t = 1000)]
-    interval_us: u64,
+    pub interval_us: u64,
     /// How many times to invoke `_start`
     #[arg(long, default_value_t = 1)]
-    iterations: usize,
+    pub iterations: usize,
     /// Skip the GuestProfiler entirely: no epoch_interruption, no
     /// epoch ticker thread, no pprof output. Use this for clean
     /// wall-time measurements without the ~10-15% sampling overhead.
     #[arg(long)]
-    no_profile: bool,
+    pub no_profile: bool,
 }
 
-/// Host state carried in the wasmtime `Store`. Composes the
-/// moonbit-stdio buffers (for spectest.print_char / wasi fd_write) with
-/// the profile session.
 struct HostState {
     stdio: MoonbitStdioState,
     profiler: ProfileSession,
@@ -74,19 +66,15 @@ impl TakeProfileSession for HostState {
     }
 }
 
-fn main() -> Result<()> {
-    let args = Args::parse();
+pub fn run(args: Args) -> Result<()> {
     let wasm_bytes = fs::read(&args.wasm)
         .with_context(|| format!("reading wasm at {}", args.wasm.display()))?;
 
     let mut config = Config::new();
-    // epoch_interruption inflates wall time by ~10-15%; only enable when
-    // we actually intend to sample.
     if !args.no_profile {
         config.epoch_interruption(true);
     }
     config.cranelift_opt_level(wasmtime::OptLevel::Speed);
-    // GuestProfiler needs the pc → wasm offset map to resolve symbols.
     config.generate_address_map(true);
     // ackermann(3, 10) recurses ~16k deep — moonbit emits >32 bytes/frame so
     // the default 512 KiB wasm stack overflows. Bump both wasm + host caps.
@@ -97,8 +85,6 @@ fn main() -> Result<()> {
     let module = Module::new(&engine, &wasm_bytes)?;
 
     let interval = Duration::from_micros(args.interval_us);
-    // The session itself is cheap; we just don't install the deadline
-    // callback or start the ticker when --no-profile is set.
     let session = ProfileSession::new(
         &engine,
         "moonbit-guest",
@@ -121,9 +107,6 @@ fn main() -> Result<()> {
     };
 
     let mut linker: Linker<HostState> = Linker::new(&engine);
-    // Provide the moonbit println surface (legacy + WASI). For non-moonbit
-    // wasm this entire block goes away — just don't depend on
-    // moonbit-wasm-host.
     moonbit_wasm_host::register(&mut linker)?;
 
     let instance = linker.instantiate(&mut store, &module)?;
@@ -134,17 +117,16 @@ fn main() -> Result<()> {
         start.call(&mut store, ())?;
     }
     let elapsed = t0.elapsed();
-    drop(_ticker); // stop epoch bumps before consuming the store
+    drop(_ticker);
 
     if args.no_profile {
         eprintln!(
-            "[wasmtime-runner] {} iter in {:.2?} (no profile)",
+            "[moon-pprof profile] {} iter in {:.2?} (no profile)",
             args.iterations, elapsed,
         );
         return Ok(());
     }
 
-    // Extract the session, then derive both outputs from the same JSON.
     let session = HostState::take_session(store);
     let mut json = Vec::new();
     session.into_json(&mut json)?;
@@ -158,13 +140,13 @@ fn main() -> Result<()> {
         .with_context(|| format!("writing {}", args.out.display()))?;
 
     eprintln!(
-        "[wasmtime-runner] {} iter in {:.2?} → {}",
+        "[moon-pprof profile] {} iter in {:.2?} → {}",
         args.iterations,
         elapsed,
         args.out.display(),
     );
     if let Some(p) = args.json_out.as_ref() {
-        eprintln!("[wasmtime-runner] firefox json → {}", p.display());
+        eprintln!("[moon-pprof profile] firefox json → {}", p.display());
     }
     Ok(())
 }

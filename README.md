@@ -26,9 +26,7 @@ packages/                               公開ライブラリ (npm)
 └── pprof-tools/                        @mizchi/pprof-tools (subpath exports: 汎用 + moonbit)
 
 runners/                                CLI / binary
-├── wasmtime-runner/                    Rust。wasm を wasmtime + GuestProfiler で実行 + pprof 化
-├── pprof-summary/                      Rust。pprof を読んで self-time / mem-mgmt rollup, --diff
-├── bench-runner/                       Rust。バックエンド横断ベンチ + baseline ↔ patched 表
+├── moon-pprof/                         Rust。統合 CLI: `profile` / `summary` (with --diff) / `bench` subcommand
 ├── http-baseline-server/               Rust (axum + tokio)。bench-async の http server bench 用 baseline (:30003)
 ├── run-wasm-gc.mjs / run-js.mjs        Node V8 inspector
 ├── cpuprofile-to-pprof.mjs
@@ -56,7 +54,7 @@ mkdir -p .bin
 
 # Rust: workspace 一括ビルド + .bin にコピー
 cargo build --workspace --release
-cp target/release/wasmtime-runner target/release/pprof-summary target/release/bench-runner target/release/http-baseline-server .bin/
+cp target/release/moon-pprof target/release/http-baseline-server .bin/
 
 # npm workspace は symlink 解決のみ
 npm install
@@ -201,13 +199,14 @@ import { moonbitWasmImports } from "@mizchi/pprof-tools/moonbit/wasm-host-import
 
 | ツール | 用途 |
 |---|---|
-| `wasmtime-runner --no-profile` | profile を切ってクリーンな wasm wall-time |
+| `.bin/moon-pprof profile --no-profile <wasm>` | profile を切ってクリーンな wasm wall-time |
+| `.bin/moon-pprof summary <file>` | `Memory-management self time` rollup を含む top-N 表示 |
+| `.bin/moon-pprof summary --diff <a> <b>` | 関数毎の改善/退行 diff (top-N) |
+| `.bin/moon-pprof bench` | baseline ↔ patched 自動切替 + markdown 表出力 |
 | `run-wasm-gc.mjs --no-profile` | V8 inspector を切って wasm-gc wall-time |
 | `run-js.mjs --no-profile` | 同 js |
-| `.bin/bench-runner` | baseline ↔ patched 自動切替 + markdown 表出力 |
 | `.bin/patched-toolchain` | `~/.moon` snapshot → diff 適用 → 全 target rebundle を 1 コマンドで |
 | `.bin/patched-mooncakes` | 各プロジェクトの `.mooncakes/<dep>/` snapshot → diff 適用 → restore (registry dep 用) |
-| `.bin/pprof-summary` | `Memory-management self time` rollup を含む top-N 表示 (`--diff base patched` で改善/退行 diff も) |
 
 PR-1 (bigint factorial 3×) の再現:
 
@@ -215,7 +214,7 @@ PR-1 (bigint factorial 3×) の再現:
 .bin/patched-toolchain init
 .bin/patched-toolchain apply notes/pr-drafts/01-bigint-mul-single-limb/patch.diff
 .bin/patched-toolchain rebundle
-.bin/bench-runner --workloads bigint_ops,bigint_square --runs 3
+.bin/moon-pprof bench --workloads bigint_ops,bigint_square --runs 3
 ```
 
 `moonbitlang/x` PR-04 (uuid `to_string` -64%) の再現:
@@ -229,14 +228,14 @@ cp -r /tmp/pprof-mbt-mooncakes/bench-x /tmp/pprof-mbt-mooncakes/bench-x.patched
 ( cd /tmp/pprof-mbt-mooncakes/bench-x.patched/moonbitlang/x \
   && patch -p1 < $(pwd)/notes/x-pr-drafts/04-uuid-tostring-inplace/patch.diff )
 
-# bench-runner で baseline/patched mooncakes を自動切替しつつ全 backend で計測
-.bin/bench-runner \
-  -bench-dir bench-x \
-  -backends native,wasm-gc,js \
-  -workloads uuid_parse \
-  -mooncakes-baseline /tmp/pprof-mbt-mooncakes/bench-x \
-  -mooncakes-patched /tmp/pprof-mbt-mooncakes/bench-x.patched \
-  -runs 3
+# moon-pprof bench で baseline/patched mooncakes を自動切替しつつ全 backend で計測
+.bin/moon-pprof bench \
+  --bench-dir bench-x \
+  --backends native,wasm-gc,js \
+  --workloads uuid_parse \
+  --mooncakes-baseline /tmp/pprof-mbt-mooncakes/bench-x \
+  --mooncakes-patched /tmp/pprof-mbt-mooncakes/bench-x.patched \
+  --runs 3
 ```
 
 → markdown 表に native -64% / wasm-gc -44% / js -39% が出る。

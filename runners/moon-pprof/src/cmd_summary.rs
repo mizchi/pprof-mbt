@@ -1,40 +1,70 @@
-//! pprof-summary reads a pprof and emits three views:
-//!   * total CPU + breakdown between MoonBit's memory-management runtime
-//!     functions (incref / decref / malloc / free / TLSF / get_tag /
-//!     make_array_header) and everything else (user code + lib code)
-//!   * top user functions by self time (with mem-mgmt frames hidden)
-//!   * top user functions by transitive time spent in mem-mgmt — i.e.
-//!     "which code paths allocate the most"
-//!
-//! With `--diff base.pb.gz patched.pb.gz` it instead diffs two profiles
-//! and shows top improvements / regressions / appearances / disappearances
-//! at function self-time granularity.
-//!
-//! Rust rewrite of the Go original (runners/wzprof-runner/cmd/pprof-summary).
+//! `moon-pprof summary <file>` — print self-time / mem-mgmt rollup.
+//! `moon-pprof summary --diff <a> <b>` — diff two profiles at function granularity.
 
 use std::collections::HashMap;
 use std::env;
 use std::fs::File;
 use std::io::Read;
-use std::process::ExitCode;
+use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow};
+use clap::Parser;
 use firefox_to_pprof::proto::Profile;
 use flate2::read::GzDecoder;
 use prost::Message;
 use regex::Regex;
 
-/// Symbols MoonBit emits for refcount and allocator primitives across all
-/// three backends. Tuned against json_parse / sorted_map_merge / regex_match
-/// outputs. Used as the default for `--mem-pattern`.
+/// Default regex matching MoonBit's runtime mem-mgmt symbols. Tuned
+/// against json_parse / sorted_map_merge / regex_match outputs.
 const DEFAULT_MEM_PATTERN: &str = r"^(moonbit\.(incref|decref|gc\.malloc|gc\.free|malloc|free|make_array_header|get_tag|array_length|check_range|drop_object)|tlsf/.+|moonbit_drop_object|libc_(malloc|free)|moonbit_malloc|moonbit_decref|moonbit_incref|_(?:malloc|free)|libsystem_malloc\..*)$";
+
+#[derive(Parser, Debug)]
+#[command(about = "Print pprof self-time / mem-mgmt rollup, or diff two profiles")]
+pub struct Args {
+    /// Profile to summarize (positional). With --diff, this is the baseline
+    /// and the second positional is the patched profile.
+    pub profile: PathBuf,
+
+    /// Patched profile (only used with --diff).
+    pub patched: Option<PathBuf>,
+
+    /// Diff two profiles instead of summarizing one.
+    #[arg(long, short)]
+    pub diff: bool,
+
+    /// Regex matched against function names to classify memory-management
+    /// primitives in the rollup. Default is tuned for MoonBit. Falls back
+    /// to $PPROF_SUMMARY_MEM_PATTERN env var.
+    #[arg(long)]
+    pub mem_pattern: Option<String>,
+}
+
+pub fn run(args: Args) -> Result<()> {
+    let mem_pattern = args
+        .mem_pattern
+        .clone()
+        .or_else(|| env::var("PPROF_SUMMARY_MEM_PATTERN").ok())
+        .unwrap_or_else(|| DEFAULT_MEM_PATTERN.to_string());
+    let mem_mgmt = mem_mgmt_re(&mem_pattern)?;
+
+    if args.diff {
+        let patched = args
+            .patched
+            .as_ref()
+            .ok_or_else(|| anyhow!("--diff needs two positional args (base, patched)"))?;
+        run_diff(&args.profile, patched, &mem_mgmt)
+    } else {
+        if args.patched.is_some() {
+            return Err(anyhow!("second positional only allowed with --diff"));
+        }
+        run_single(&args.profile, &mem_mgmt)
+    }
+}
 
 fn mem_mgmt_re(pattern: &str) -> Result<Regex> {
     Regex::new(pattern).with_context(|| format!("compile --mem-pattern regex: {}", pattern))
 }
 
-/// Sample value index + unit (ns/us/ms/samples) + divisor to convert to ms
-/// (or unchanged for sample count).
 struct ValueAxis {
     idx: usize,
     unit: &'static str,
@@ -56,7 +86,6 @@ fn value_axis(p: &Profile) -> ValueAxis {
             return ValueAxis { idx: i, unit: label, div };
         }
     }
-    // Fallback: nanoseconds without conversion.
     ValueAxis { idx: 0, unit: "ns", div: 1.0 }
 }
 
@@ -65,15 +94,6 @@ fn string_at(p: &Profile, idx: i64) -> &str {
         return "";
     }
     p.string_table.get(idx as usize).map(|s| s.as_str()).unwrap_or("")
-}
-
-/// Leaf-frame function name for a Location id, or "(unknown)" if none.
-fn top_line(p: &Profile, loc_lookup: &HashMap<u64, usize>, fn_name: &HashMap<u64, &str>, loc_id: u64) -> &'static str {
-    // We can't easily return &str into Profile here because we may need an
-    // owned literal. Resolve to a static "(unknown)" + use the caller's
-    // borrow strategy instead. (See `resolve_top_lines`.)
-    let _ = (p, loc_lookup, fn_name, loc_id);
-    "(unknown)"
 }
 
 fn resolve_top_lines(p: &Profile) -> HashMap<u64, String> {
@@ -109,11 +129,10 @@ struct Summary {
     axis: ValueAxis,
 }
 
-fn load_profile(path: &str) -> Result<Profile> {
-    let mut f = File::open(path).with_context(|| format!("open {}", path))?;
+fn load_profile(path: &PathBuf) -> Result<Profile> {
+    let mut f = File::open(path).with_context(|| format!("open {}", path.display()))?;
     let mut raw = Vec::new();
     f.read_to_end(&mut raw)?;
-    // pprof files are gzipped protobuf; the Go `profile.Parse` handles both.
     let buf = if raw.len() >= 2 && raw[0] == 0x1f && raw[1] == 0x8b {
         let mut dec = GzDecoder::new(&raw[..]);
         let mut out = Vec::new();
@@ -149,10 +168,6 @@ fn compute_summary(p: &Profile, mem_mgmt: &Regex) -> Summary {
             mem_mgmt_total += v;
         }
 
-        // Cumulative (dedup per sample), root → leaf is sample.location_id
-        // order (pprof = leaf first). We don't actually use `cum` downstream
-        // except for the bookkeeping field, but compute it to mirror the
-        // Go version's structure.
         let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for id in &sample.location_id {
             if let Some(name) = loc_to_name.get(id) {
@@ -163,9 +178,6 @@ fn compute_summary(p: &Profile, mem_mgmt: &Regex) -> Summary {
         }
 
         if leaf_is_mem {
-            // Mem-cum: every non-mem-mgmt frame on this stack gets credited
-            // with `v` (this stack ended in memory work, so they "caused"
-            // memory work transitively).
             for id in &sample.location_id {
                 if let Some(name) = loc_to_name.get(id) {
                     if mem_mgmt.is_match(name) {
@@ -203,8 +215,7 @@ fn print_top(
     println!("{}", title);
     println!("{}", "-".repeat(title.len()));
     rows.sort_by(|a, b| b.1.cmp(&a.1));
-    let take = rows.iter().take(n);
-    for (name, v) in take {
+    for (name, v) in rows.iter().take(n) {
         if *v == 0 {
             break;
         }
@@ -219,12 +230,11 @@ fn print_top(
     println!();
 }
 
-fn run_single(path: &str, mem_pattern: &str) -> Result<()> {
+fn run_single(path: &PathBuf, mem_mgmt: &Regex) -> Result<()> {
     let p = load_profile(path)?;
-    let mem_mgmt = mem_mgmt_re(mem_pattern)?;
-    let s = compute_summary(&p, &mem_mgmt);
+    let s = compute_summary(&p, mem_mgmt);
 
-    println!("Profile: {}", path);
+    println!("Profile: {}", path.display());
     println!(
         "Total {}: {:.2} ({} samples)",
         s.axis.unit,
@@ -283,12 +293,11 @@ fn run_single(path: &str, mem_pattern: &str) -> Result<()> {
     Ok(())
 }
 
-fn run_diff(base_path: &str, patched_path: &str, mem_pattern: &str) -> Result<()> {
+fn run_diff(base_path: &PathBuf, patched_path: &PathBuf, mem_mgmt: &Regex) -> Result<()> {
     let base = load_profile(base_path)?;
     let patched = load_profile(patched_path)?;
-    let mem_mgmt = mem_mgmt_re(mem_pattern)?;
-    let bs = compute_summary(&base, &mem_mgmt);
-    let ps = compute_summary(&patched, &mem_mgmt);
+    let bs = compute_summary(&base, mem_mgmt);
+    let ps = compute_summary(&patched, mem_mgmt);
 
     if bs.axis.unit != ps.axis.unit || bs.axis.div != ps.axis.div {
         return Err(anyhow!(
@@ -299,8 +308,8 @@ fn run_diff(base_path: &str, patched_path: &str, mem_pattern: &str) -> Result<()
     let axis = &bs.axis;
 
     println!("Profile diff:");
-    println!("  base    = {}", base_path);
-    println!("  patched = {}", patched_path);
+    println!("  base    = {}", base_path.display());
+    println!("  patched = {}", patched_path.display());
     let total_delta = ps.total - bs.total;
     println!();
     println!(
@@ -323,7 +332,7 @@ fn run_diff(base_path: &str, patched_path: &str, mem_pattern: &str) -> Result<()
     for k in ps.stats.keys() {
         keys.insert(k.as_str());
     }
-    let mut rows: Vec<(String, i64, i64, i64)> = keys
+    let rows: Vec<(String, i64, i64, i64)> = keys
         .into_iter()
         .map(|k| {
             let b = bs.stats.get(k).map(|s| s.self_v).unwrap_or(0);
@@ -332,7 +341,6 @@ fn run_diff(base_path: &str, patched_path: &str, mem_pattern: &str) -> Result<()
         })
         .collect();
 
-    // Improvements: dx < 0, both > 0.
     let mut improvements: Vec<_> = rows
         .iter()
         .filter(|(_, b, p, dx)| *dx < 0 && *b > 0 && *p > 0)
@@ -353,9 +361,9 @@ fn run_diff(base_path: &str, patched_path: &str, mem_pattern: &str) -> Result<()
     gone.sort_by(|a, b| b.1.cmp(&a.1));
     print_disappeared_rows("Disappeared in patched (function only in base)", &gone, axis, bs.total, 10);
 
-    rows.retain(|(_, b, p, _)| *b == 0 && *p > 0);
-    rows.sort_by(|a, b| b.2.cmp(&a.2));
-    print_appeared_rows("New in patched (function only in patched)", &rows, axis, 10);
+    let mut novel: Vec<_> = rows.iter().filter(|(_, b, p, _)| *b == 0 && *p > 0).cloned().collect();
+    novel.sort_by(|a, b| b.2.cmp(&a.2));
+    print_appeared_rows("New in patched (function only in patched)", &novel, axis, 10);
 
     Ok(())
 }
@@ -435,94 +443,4 @@ fn print_appeared_rows(
         );
     }
     println!();
-}
-
-fn usage() -> ExitCode {
-    eprintln!("usage:");
-    eprintln!("  pprof-summary [--mem-pattern <regex>] <profile.pb.gz>");
-    eprintln!("  pprof-summary [--mem-pattern <regex>] --diff <base.pb.gz> <patched.pb.gz>");
-    eprintln!();
-    eprintln!("--mem-pattern is the regex matched against function names to classify");
-    eprintln!("memory-management primitives in the rollup. Default is tuned for MoonBit.");
-    eprintln!("Also reads PPROF_SUMMARY_MEM_PATTERN env var if --mem-pattern is unset.");
-    ExitCode::from(2)
-}
-
-fn main() -> ExitCode {
-    // suppress unused
-    let _ = top_line;
-    // Default SIGPIPE handling on Unix is "ignore", which makes println!
-    // panic when a downstream consumer (like `head`) closes the pipe.
-    // Restore the inherit-from-shell default so the process exits silently.
-    #[cfg(unix)]
-    unsafe {
-        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
-    }
-    let argv: Vec<String> = env::args().collect();
-    let (positional, mem_pattern) = match split_flags(&argv[1..]) {
-        Ok(x) => x,
-        Err(e) => {
-            eprintln!("{}", e);
-            return ExitCode::from(2);
-        }
-    };
-    if positional.is_empty() {
-        return usage();
-    }
-    match positional[0].as_str() {
-        "-h" | "--help" | "help" => usage(),
-        "--diff" | "-d" | "diff" => {
-            if positional.len() != 3 {
-                return usage();
-            }
-            match run_diff(&positional[1], &positional[2], &mem_pattern) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(e) => {
-                    eprintln!("diff: {:#}", e);
-                    ExitCode::FAILURE
-                }
-            }
-        }
-        path => {
-            if positional.len() != 1 {
-                return usage();
-            }
-            match run_single(path, &mem_pattern) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(e) => {
-                    eprintln!("{:#}", e);
-                    ExitCode::FAILURE
-                }
-            }
-        }
-    }
-}
-
-/// Pull `--mem-pattern <regex>` (or `--mem-pattern=<regex>`) out of argv;
-/// fall back to `$PPROF_SUMMARY_MEM_PATTERN`; finally `DEFAULT_MEM_PATTERN`.
-/// Returns (remaining positional args, regex string).
-fn split_flags(args: &[String]) -> Result<(Vec<String>, String), String> {
-    let mut positional = Vec::with_capacity(args.len());
-    let mut mem_pattern: Option<String> = None;
-    let mut i = 0;
-    while i < args.len() {
-        let a = &args[i];
-        if let Some(rest) = a.strip_prefix("--mem-pattern=") {
-            mem_pattern = Some(rest.to_string());
-            i += 1;
-        } else if a == "--mem-pattern" {
-            if i + 1 >= args.len() {
-                return Err("--mem-pattern needs a value".into());
-            }
-            mem_pattern = Some(args[i + 1].clone());
-            i += 2;
-        } else {
-            positional.push(a.clone());
-            i += 1;
-        }
-    }
-    let pat = mem_pattern
-        .or_else(|| env::var("PPROF_SUMMARY_MEM_PATTERN").ok())
-        .unwrap_or_else(|| DEFAULT_MEM_PATTERN.to_string());
-    Ok((positional, pat))
 }

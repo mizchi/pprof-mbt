@@ -20,7 +20,6 @@ wasmtime-guest.json
 
 # Rust build artifacts (workspace root)
 target/
-runners/wasmtime-runner/target/
 
 # moonbit dependency cache (re-fetched by moon)
 .mooncakes/
