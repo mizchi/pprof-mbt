@@ -22,12 +22,14 @@
   "exports": {
     "./demangle": "./demangle.mjs",
     "./firefox-to-pprof": "./firefox-to-pprof.mjs",
-    "./cpuprofile-to-pprof": "./cpuprofile-to-pprof.mjs"
+    "./cpuprofile-to-pprof": "./cpuprofile-to-pprof.mjs",
+    "./wasm-host-imports": "./wasm-host-imports.mjs"
   },
   "files": [
     "demangle.mjs",
     "firefox-to-pprof.mjs",
     "cpuprofile-to-pprof.mjs",
+    "wasm-host-imports.mjs",
     "README.md"
   ],
   "dependencies": {
