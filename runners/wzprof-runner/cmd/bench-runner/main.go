@@ -34,22 +34,26 @@ import (
 )
 
 type config struct {
-	baselineMoon string
-	patchedMoon  string
-	benchDir     string
-	runnerDir    string
-	binDir       string
-	workloads    []string
-	backends     []string
-	runs         int
-	build        bool
+	baselineMoon       string
+	patchedMoon        string
+	mooncakesBaseline  string
+	mooncakesPatched   string
+	benchDir           string
+	runnerDir          string
+	binDir             string
+	workloads          []string
+	backends           []string
+	runs               int
+	build              bool
 }
 
 func main() {
 	var c config
 	var workloadsStr, backendsStr string
 	flag.StringVar(&c.baselineMoon, "baseline-moon", os.Getenv("HOME")+"/.moon", "Path to baseline moonbit toolchain root")
-	flag.StringVar(&c.patchedMoon, "patched-moon", "/tmp/moonbit-patched", "Path to patched moonbit toolchain root")
+	flag.StringVar(&c.patchedMoon, "patched-moon", "/tmp/moonbit-patched", "Path to patched moonbit toolchain root (falls back to baseline if missing)")
+	flag.StringVar(&c.mooncakesBaseline, "mooncakes-baseline", "", "Path to a .mooncakes snapshot to use as baseline (registry-dep swap mode)")
+	flag.StringVar(&c.mooncakesPatched, "mooncakes-patched", "", "Path to a .mooncakes snapshot to use as patched (registry-dep swap mode)")
 	flag.StringVar(&c.benchDir, "bench-dir", "./bench", "Path to bench workspace (containing cmd/<workload>)")
 	flag.StringVar(&c.runnerDir, "runner-dir", "./runners", "Path to runners (run-wasm-gc.mjs etc)")
 	flag.StringVar(&c.binDir, "bin-dir", "./.bin", "Path to .bin (wasmtime-runner)")
@@ -104,12 +108,46 @@ func run(c *config) error {
 	// (workload, backend) -> { baseline median, patched median }
 	results := make(map[string]map[string]cell)
 
+	// If -patched-moon was left at the default and doesn't exist on disk,
+	// transparently fall back to -baseline-moon. This matters when the user
+	// is using the mooncakes-swap mode and doesn't have a patched toolchain.
+	patchedMoon := c.patchedMoon
+	if !dirExists(patchedMoon) {
+		fmt.Fprintf(os.Stderr, "==> patched toolchain %s missing; using baseline for both phases\n", patchedMoon)
+		patchedMoon = c.baselineMoon
+	}
+
+	mooncakesSwap := c.mooncakesBaseline != "" || c.mooncakesPatched != ""
+	if mooncakesSwap {
+		if c.mooncakesBaseline == "" || c.mooncakesPatched == "" {
+			return fmt.Errorf("-mooncakes-baseline and -mooncakes-patched must be set together")
+		}
+		if !dirExists(c.mooncakesBaseline) {
+			return fmt.Errorf("-mooncakes-baseline %s does not exist", c.mooncakesBaseline)
+		}
+		if !dirExists(c.mooncakesPatched) {
+			return fmt.Errorf("-mooncakes-patched %s does not exist", c.mooncakesPatched)
+		}
+	}
+
 	for _, kind := range []string{"baseline", "patched"} {
 		moonRoot := c.baselineMoon
 		if kind == "patched" {
-			moonRoot = c.patchedMoon
+			moonRoot = patchedMoon
 		}
 		fmt.Fprintf(os.Stderr, "==> %s toolchain: %s\n", kind, moonRoot)
+
+		if mooncakesSwap {
+			src := c.mooncakesBaseline
+			if kind == "patched" {
+				src = c.mooncakesPatched
+			}
+			if err := swapMooncakes(c.benchDir, src); err != nil {
+				return fmt.Errorf("mooncakes swap (%s): %w", kind, err)
+			}
+			fmt.Fprintf(os.Stderr, "==> %s mooncakes: %s -> %s/.mooncakes\n", kind, src, c.benchDir)
+		}
+
 		if c.build {
 			if err := buildAll(c, moonRoot); err != nil {
 				return fmt.Errorf("build (%s): %w", kind, err)
@@ -297,4 +335,32 @@ func printMarkdown(c *config, results map[string]map[string]cell) {
 
 type cell struct {
 	baseMs, patchedMs float64
+}
+
+func dirExists(p string) bool {
+	if p == "" {
+		return false
+	}
+	fi, err := os.Stat(p)
+	return err == nil && fi.IsDir()
+}
+
+// swapMooncakes replaces benchDir/.mooncakes with a fresh copy of src.
+// Used by the mooncakes-swap mode to flip between baseline and patched
+// dependency states.
+func swapMooncakes(benchDir, src string) error {
+	dst := filepath.Join(benchDir, ".mooncakes")
+	if err := os.RemoveAll(dst); err != nil {
+		return fmt.Errorf("rm %s: %w", dst, err)
+	}
+	cmd := exec.Command("cp", "-r", src, dst)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("cp -r %s %s: %w\n%s", src, dst, err, out)
+	}
+	// Make sure the new tree is user-writable in case the source was r-o.
+	cmd = exec.Command("chmod", "-R", "u+w", dst)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("chmod -R u+w %s: %w\n%s", dst, err, out)
+	}
+	return nil
 }

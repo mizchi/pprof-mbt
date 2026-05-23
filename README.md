@@ -247,19 +247,25 @@ PR-1 (bigint factorial 3×) の再現:
 `moonbitlang/x` PR-04 (uuid `to_string` -64%) の再現:
 
 ```sh
+# baseline snapshot 作成
 .bin/patched-mooncakes init bench-x
-# baseline 計測
-( cd bench-x && moon build --target native --release )
-time bench-x/_build/native/release/build/cmd/uuid_parse/uuid_parse.exe
 
-.bin/patched-mooncakes apply bench-x moonbitlang/x \
-  notes/x-pr-drafts/04-uuid-tostring-inplace/patch.diff
-# patched 計測
-( cd bench-x && moon build --target native --release )
-time bench-x/_build/native/release/build/cmd/uuid_parse/uuid_parse.exe
+# patched snapshot を別ディレクトリに作る
+cp -r /tmp/pprof-mbt-mooncakes/bench-x /tmp/pprof-mbt-mooncakes/bench-x.patched
+( cd /tmp/pprof-mbt-mooncakes/bench-x.patched/moonbitlang/x \
+  && patch -p1 < $(pwd)/notes/x-pr-drafts/04-uuid-tostring-inplace/patch.diff )
 
-.bin/patched-mooncakes restore bench-x       # baseline に戻す
+# bench-runner で baseline/patched mooncakes を自動切替しつつ全 backend で計測
+.bin/bench-runner \
+  -bench-dir bench-x \
+  -backends native,wasm-gc,js \
+  -workloads uuid_parse \
+  -mooncakes-baseline /tmp/pprof-mbt-mooncakes/bench-x \
+  -mooncakes-patched /tmp/pprof-mbt-mooncakes/bench-x.patched \
+  -runs 3
 ```
+
+→ markdown 表に native -64% / wasm-gc -44% / js -39% が出る。
 
 ## 制約 / 既知の TODO
 
