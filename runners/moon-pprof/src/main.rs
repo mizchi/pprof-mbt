@@ -15,6 +15,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 mod cmd_bench;
+mod cmd_cpuprofile2pprof;
 mod cmd_profile;
 mod cmd_summary;
 
@@ -33,6 +34,8 @@ enum Command {
     Summary(cmd_summary::Args),
     /// Drive a set of MoonBit benches across backends and emit a markdown delta table.
     Bench(cmd_bench::Args),
+    /// Convert a Node V8 `.cpuprofile` into gzip'd pprof.
+    Cpuprofile2pprof(cmd_cpuprofile2pprof::Args),
 }
 
 fn main() -> ExitCode {
@@ -60,6 +63,7 @@ fn main() -> ExitCode {
         Command::Profile(a) => cmd_profile::run(a),
         Command::Summary(a) => cmd_summary::run(a),
         Command::Bench(a) => cmd_bench::run(a),
+        Command::Cpuprofile2pprof(a) => cmd_cpuprofile2pprof::run(a),
     };
 
     match result {

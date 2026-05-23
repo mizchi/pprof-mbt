@@ -7,7 +7,6 @@ live under the `/moonbit` subpath.
 [pprof]: https://github.com/google/pprof
 
 ```js
-import { convert as cpuprofileToPprof } from "@mizchi/pprof-tools/cpuprofile-to-pprof";
 import { writePprofFromFirefox } from "@mizchi/pprof-tools/firefox-to-pprof";
 
 // MoonBit-specific helpers (skip these if you're profiling Rust / AS / Zig wasm):
@@ -18,17 +17,12 @@ import {
 } from "@mizchi/pprof-tools/moonbit/wasm-host-imports";
 ```
 
+> V8 `.cpuprofile → pprof` conversion has moved to the Rust crate
+> `cpuprofile-to-pprof` and is invoked from the `moon-pprof` CLI
+> (`moon-pprof cpuprofile2pprof <in> <out>`). The TypeScript port that
+> used to live here was removed; use the Rust crate or the CLI instead.
+
 ## Generic exports
-
-### `@mizchi/pprof-tools/cpuprofile-to-pprof`
-
-```js
-convert(cpuprofile, { demangle?, mappingFilename? }): { encoded, stats }
-```
-
-Convert a Node V8 `.cpuprofile` (from `Profiler.start/stop` or
-`node --cpu-prof`) into gzip'd pprof bytes. The default demangler is
-moonbit's; pass `{ demangle: s => s }` for non-moonbit code.
 
 ### `@mizchi/pprof-tools/firefox-to-pprof`
 

@@ -12,8 +12,8 @@
     "build:wasm": "cd bench && moon build --release --no-strip --target=wasm cmd/main",
     "build:native": "cd bench && moon build --release --target=native cmd/main",
     "profile:wasm-gc": ".bin/moon-pprof profile --wasm-gc --iterations 5 --out wasm-gc.pb.gz bench/_build/wasm-gc/release/build/cmd/main/main.wasm",
-    "profile:wasm-gc:v8": "node runners/v8/run-wasm-gc.mjs bench/_build/wasm-gc/release/build/cmd/main/main.wasm wasm-gc.cpuprofile 5 && node runners/v8/cpuprofile-to-pprof.mjs wasm-gc.cpuprofile wasm-gc.pb.gz",
-    "profile:js": "node runners/v8/run-js.mjs $PWD/bench/_build/js/release/build/cmd/main/main.js js.cpuprofile && node runners/v8/cpuprofile-to-pprof.mjs js.cpuprofile js.pb.gz",
+    "profile:wasm-gc:v8": "node runners/v8/run-wasm-gc.mjs bench/_build/wasm-gc/release/build/cmd/main/main.wasm wasm-gc.cpuprofile 5 && .bin/moon-pprof cpuprofile2pprof wasm-gc.cpuprofile wasm-gc.pb.gz",
+    "profile:js": "node runners/v8/run-js.mjs $PWD/bench/_build/js/release/build/cmd/main/main.js js.cpuprofile && .bin/moon-pprof cpuprofile2pprof js.cpuprofile js.pb.gz",
     "profile:wasm": ".bin/moon-pprof profile --interval-us 1000 --out wasmtime-guest.pb.gz bench/_build/wasm/release/build/cmd/main/main.wasm",
     "profile:native": "samply record --save-only --unstable-presymbolicate -o native-samply.json.gz --no-open -- bench/_build/native/release/build/cmd/main/main.exe && node runners/samply-to-pprof.mjs native-samply.json.gz native-samply.json.syms.json native.pb.gz"
   },

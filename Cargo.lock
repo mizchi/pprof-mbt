@@ -291,6 +291,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "cpuprofile-to-pprof"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "firefox-to-pprof",
+ "flate2",
+ "moonbit-demangle",
+ "prost",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cranelift-assembler-x64"
 version = "0.131.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1075,12 +1088,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "cpuprofile-to-pprof",
  "firefox-to-pprof",
  "flate2",
  "libc",
  "moonbit-wasm-host",
  "prost",
  "regex",
+ "serde_json",
  "wasmtime",
  "wasmtime-guest-pprof",
 ]

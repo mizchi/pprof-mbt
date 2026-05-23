@@ -65,7 +65,7 @@ go tool pprof -http :8000 wasm-gc.pb.gz              # ブラウザで UI
 | `http-baseline-server` | port 30003 で空ハンドラ HTTP (axum)、k6 比較の baseline 用 |
 | `node runners/v8/run-wasm-gc.mjs <wasm>` | wasm-gc を Node V8 で実行 + .cpuprofile 出力 (`--no-profile` で wall time)。 default 経路 (`moon-pprof profile`) で wasmtime に乗らない数値を取りたい時の比較用 |
 | `node runners/v8/run-js.mjs <js>` | js バックエンドを Node V8 で実行 (V8 必須) |
-| `node runners/v8/cpuprofile-to-pprof.mjs <in> <out>` | V8 .cpuprofile → pprof gzip |
+| `moon-pprof cpuprofile2pprof <in> <out>` | V8 .cpuprofile → pprof gzip (旧 `cpuprofile-to-pprof.mjs` の後継、 Rust 移植) |
 | `node runners/samply-to-pprof.mjs ...` | samply Firefox JSON → pprof |
 
 ### 典型ワークフロー: 改善 PR を作る
@@ -183,6 +183,7 @@ Rust と npm の 2 系統で外部プロジェクトから取り込み可能。
 [dependencies]
 moonbit-demangle      = "0.1"
 firefox-to-pprof      = "0.1"  # 汎用: samply / wasmtime の JSON を pprof に
+cpuprofile-to-pprof   = "0.1"  # 汎用: V8 .cpuprofile を pprof に
 wasmtime-guest-pprof  = "0.1"  # 汎用: wasmtime app に組み込む
 moonbit-wasm-host     = "0.1"  # moonbit wasm の host import を 1 行で登録
 ```
@@ -195,8 +196,6 @@ assert_eq!(demangle("_M0FP26mizchi5bench9ackermann"), "mizchi::bench::ackermann"
 ### JavaScript
 
 ```js
-// 汎用
-import { convert } from "@mizchi/pprof-tools/cpuprofile-to-pprof";
 import { writePprofFromFirefox } from "@mizchi/pprof-tools/firefox-to-pprof";
 
 // MoonBit 用
@@ -206,6 +205,11 @@ import {
   autoStubMissing,
 } from "@mizchi/pprof-tools/moonbit/wasm-host-imports";
 ```
+
+> V8 `.cpuprofile → pprof` は Rust の `cpuprofile-to-pprof` crate
+> (`moon-pprof cpuprofile2pprof <in> <out>` から CLI で呼べる) に
+> 移管されました。 旧 `@mizchi/pprof-tools/cpuprofile-to-pprof` は
+> 廃止。
 
 ## 汎用 wasm に転用する
 
@@ -235,9 +239,21 @@ let bytes = firefox_to_pprof::Builder::new(&profile, frames, samples)
 
 **Node / V8 .cpuprofile**:
 
-```js
-import { convert } from "@mizchi/pprof-tools/cpuprofile-to-pprof";
-const { encoded } = convert(cpuprofile, { demangle: (s) => s });  // 恒等関数で moonbit demangle を無効化
+CLI で済ますなら:
+
+```sh
+moon-pprof cpuprofile2pprof --no-demangle in.cpuprofile out.pb.gz
+```
+
+ライブラリとして組み込むなら `cpuprofile-to-pprof` crate:
+
+```rust
+use cpuprofile_to_pprof::{Builder, CpuProfile};
+let profile: CpuProfile = serde_json::from_slice(&bytes)?;
+let out = Builder::new(profile)
+    .demangle_with(|s| s.to_string())  // moonbit demangle を無効化
+    .encode()?;
+std::fs::write("out.pb.gz", out.encoded)?;
 ```
 
 **pprof-summary の mem-mgmt 分類**:
@@ -256,6 +272,7 @@ crates/                                 公開ライブラリ (Rust)
 ├── moonbit-demangle/                   mangled symbol → readable name
 ├── moonbit-wasm-host/                  moonbit wasm の host import (spectest / WASI)
 ├── firefox-to-pprof/                   Firefox Profiler JSON → pprof (汎用)
+├── cpuprofile-to-pprof/                V8 .cpuprofile → pprof (汎用)
 └── wasmtime-guest-pprof/               wasmtime GuestProfiler 駆動 + pprof (汎用)
 
 packages/                               公開ライブラリ (npm)
@@ -268,8 +285,8 @@ runners/                                CLI / binary
 ├── patched-mooncakes                   bash。.mooncakes/ snapshot / patch / restore
 ├── v8/                                 Node V8 inspector 経由の経路
 │   ├── run-wasm-gc.mjs                 wasm-gc を V8 で実行 (--via-v8)
-│   ├── run-js.mjs                      js を V8 で実行
-│   └── cpuprofile-to-pprof.mjs         V8 .cpuprofile → pprof
+│   └── run-js.mjs                      js を V8 で実行
+│                                       (.cpuprofile → pprof は moon-pprof cpuprofile2pprof)
 ├── samply-to-pprof.mjs                 samply → pprof
 └── wasmtime-to-pprof.mjs               wasmtime guest JSON → pprof
 
