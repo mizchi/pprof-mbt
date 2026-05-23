@@ -1,0 +1,17 @@
+diff --git a/path/posix/unix_path.mbt b/path/posix/unix_path.mbt
+index cd88af1..cd05167 100644
+--- a/path/posix/unix_path.mbt
++++ b/path/posix/unix_path.mbt
+@@ -85,10 +85,10 @@ impl Show for UnixPath with output(self : UnixPath, logger : &Logger) -> Unit {
+   match components {
+     [] => ()
+     [x, .. xs] => {
+-      logger.write_string(x.to_owned())
++      logger.write_view(x)
+       for x in xs {
+         logger.write_char('/')
+-        logger.write_string(x.to_owned())
++        logger.write_view(x)
+       }
+     }
+   }

@@ -159,6 +159,33 @@ Same iter-overhead pattern as moonbitlang/async's gzip `crc32_update`
 patch and the json5 `to_string` patch below. 3/3 `codec/base64` tests
 pass on upstream main with this applied.
 
+### ✅ `path/posix/unix_path.mbt` Show write_view (PR-05)
+
+`UnixPath`'s `Show::output` wrote each StringView component via
+`logger.write_string(x.to_owned())` — one allocation + two copies per
+component. `Logger` already has a `write_view(StringView)` method that
+does it in one. Switched both call sites:
+
+```moonbit
+- logger.write_string(x.to_owned())
++ logger.write_view(x)
+```
+
+`Path::normalize(p)` is `UnixPath::parse(p.0).to_string()`, so every
+normalize goes through this and pays the per-component copy cost. With
+~5–10 components per path the redundant work dominates.
+
+Result on `bench-x/cmd/path_normalize` (`normalize` + `dirname` +
+`basename` + `extname` × 200k):
+
+|                | baseline | patched | delta   |
+|----------------|---------:|--------:|--------:|
+| path_normalize |  282 ms  | 209 ms  | **-25.9%** |
+
+Callgrind: 3.73 G → 2.71 G Ir (-27.4%). `blit_from_string` falls from
+15.19% to 8.99%. 38/38 `moonbitlang/x/path/posix` tests pass on upstream
+main.
+
 ### ✅ `json5/lex_number.mbt` lazy `to_string` (PR-01)
 
 `lex_number_end` did `let s = ctx.input[start:end].to_owned()` before
