@@ -11,8 +11,12 @@
 | 01 | `pr-event-loop-empty-timer` | pause_loop -35.6%, cond_var_signal -22.2% (空 timer 時の SortedSet iter を回避) | +14/-7 |
 | 02 | `pr-gzip-crc32-index-loop` | gzip_roundtrip -12.8% (`for byte in chunk` の iter overhead を除去) | +13/-5 |
 | 03 | `pr-wasm-gc-shim` | wasm/wasm-gc 用の scheduler-only `run_async_main` を追加 (pure-coroutine ワークロードが wasm-gc で動く) | +20/-0 |
+| 04 | `pr-http-update-or-default` | `http::Reader::read_headers` の Map probe を 2 回 → 1 回 (`update_or_default` を利用)。RPS は誤差範囲だが clean refactor | +3/-4 |
 
-詳細な調査ログは `notes/async_investigation.md` 参照。
+詳細な調査ログ:
+- `notes/async_investigation.md` — pure-coroutine bench で見た構造
+- `notes/async_backend_comparison.md` — native / wasm / wasm-gc / js 横断
+- `notes/async_http_server_profile.md` — HTTP server を k6 + callgrind で計測
 
 ## 出し方
 

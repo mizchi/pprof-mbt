@@ -1,0 +1,31 @@
+From 3d77f6536257e02bb45c9f1f842e64f494fa4b49 Mon Sep 17 00:00:00 2001
+From: bench <bench@example.com>
+Date: Sat, 23 May 2026 05:52:52 +0000
+Subject: [PATCH] perf(http): single Map probe in read_headers via
+ update_or_default
+
+---
+ src/http/parser.mbt | 7 +++----
+ 1 file changed, 3 insertions(+), 4 deletions(-)
+
+diff --git a/src/http/parser.mbt b/src/http/parser.mbt
+index 47d8c0d..1725993 100644
+--- a/src/http/parser.mbt
++++ b/src/http/parser.mbt
+@@ -276,10 +276,9 @@ async fn Reader::read_headers(
+       }
+       _ => ()
+     }
+-    match headers.get(key) {
+-      None => headers[key] = value
+-      Some(value0) => headers[key] = "\{value0},\{value}"
+-    }
++    // Single hashmap probe (was 2: get + set). For repeated header
++    // names HTTP requires comma-joining; for new keys we just insert.
++    headers.update_or_default(key, value, value0 => "\{value0},\{value}")
+   }
+   (headers, cookies)
+ }
+-- 
+2.43.0
+
