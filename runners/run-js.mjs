@@ -1,19 +1,28 @@
 // Run the JS backend output under Node with the inspector CPU profiler.
 // Generates a .cpuprofile that the same converter can turn into pprof —
 // the mangled symbol scheme is identical to the wasm-gc backend.
+//
+// Pass `--no-profile` to skip the inspector entirely for clean wall-time
+// measurements.
 
 import { Session } from "node:inspector/promises";
 import { writeFileSync } from "node:fs";
 import { argv } from "node:process";
 
-const jsPath = argv[2] ?? "bench/_build/js/release/build/cmd/main/main.js";
-const profileOut = argv[3] ?? "js.cpuprofile";
-const iterations = Number(argv[4] ?? 1);
+const positional = argv.slice(2).filter((a) => a !== "--no-profile");
+const noProfile = argv.includes("--no-profile");
 
-const session = new Session();
-session.connect();
-await session.post("Profiler.enable");
-await session.post("Profiler.start");
+const jsPath = positional[0] ?? "bench/_build/js/release/build/cmd/main/main.js";
+const profileOut = positional[1] ?? "js.cpuprofile";
+const iterations = Number(positional[2] ?? 1);
+
+let session = null;
+if (!noProfile) {
+  session = new Session();
+  session.connect();
+  await session.post("Profiler.enable");
+  await session.post("Profiler.start");
+}
 
 const t0 = performance.now();
 for (let i = 0; i < iterations; i++) {
@@ -21,8 +30,11 @@ for (let i = 0; i < iterations; i++) {
 }
 const elapsed = performance.now() - t0;
 
-const { profile } = await session.post("Profiler.stop");
-writeFileSync(profileOut, JSON.stringify(profile));
-session.disconnect();
-
-console.error(`[js] ${iterations} iter in ${elapsed.toFixed(1)} ms → ${profileOut}`);
+if (noProfile) {
+  console.error(`[js] ${iterations} iter in ${elapsed.toFixed(1)} ms (no profile)`);
+} else {
+  const { profile } = await session.post("Profiler.stop");
+  writeFileSync(profileOut, JSON.stringify(profile));
+  session.disconnect();
+  console.error(`[js] ${iterations} iter in ${elapsed.toFixed(1)} ms → ${profileOut}`);
+}

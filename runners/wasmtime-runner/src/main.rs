@@ -36,6 +36,11 @@ struct Args {
     /// How many times to invoke `_start`
     #[arg(long, default_value_t = 1)]
     iterations: usize,
+    /// Skip the GuestProfiler entirely: no epoch_interruption, no
+    /// epoch ticker thread, no pprof output. Use this for clean
+    /// wall-time measurements without the ~10-15% sampling overhead.
+    #[arg(long)]
+    no_profile: bool,
 }
 
 /// Host state carried in the wasmtime `Store`. Owns the line buffer used
@@ -68,7 +73,11 @@ fn main() -> Result<()> {
         .with_context(|| format!("reading wasm at {}", args.wasm.display()))?;
 
     let mut config = Config::new();
-    config.epoch_interruption(true);
+    // epoch_interruption inflates wall time by ~10-15%; only enable when
+    // we actually intend to sample.
+    if !args.no_profile {
+        config.epoch_interruption(true);
+    }
     config.cranelift_opt_level(wasmtime::OptLevel::Speed);
     // GuestProfiler needs the pc → wasm offset map to resolve symbols.
     config.generate_address_map(true);
@@ -81,6 +90,8 @@ fn main() -> Result<()> {
     let module = Module::new(&engine, &wasm_bytes)?;
 
     let interval = Duration::from_micros(args.interval_us);
+    // The session itself is cheap; we just don't install the deadline
+    // callback or start the ticker when --no-profile is set.
     let session = ProfileSession::new(
         &engine,
         "moonbit-guest",
@@ -96,8 +107,12 @@ fn main() -> Result<()> {
             profiler: session,
         },
     );
-    HostState::install(&mut store);
-    let _ticker = HostState::start_ticker(&engine, interval);
+    let _ticker = if args.no_profile {
+        None
+    } else {
+        HostState::install(&mut store);
+        Some(HostState::start_ticker(&engine, interval))
+    };
 
     let mut linker: Linker<HostState> = Linker::new(&engine);
     linker.func_wrap(
@@ -176,6 +191,14 @@ fn main() -> Result<()> {
     }
     let elapsed = t0.elapsed();
     drop(_ticker); // stop epoch bumps before consuming the store
+
+    if args.no_profile {
+        eprintln!(
+            "[wasmtime-runner] {} iter in {:.2?} (no profile)",
+            args.iterations, elapsed,
+        );
+        return Ok(());
+    }
 
     // Extract the session, then derive both outputs from the same JSON.
     let session = HostState::take_session(store);

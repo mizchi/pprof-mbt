@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# patched-toolchain: snapshot ~/.moon to a writable scratch dir, apply
+# core diffs, and rebundle for all backends. Used for the PR-prep loop
+# where each patch needs to be measured in isolation.
+#
+# Usage:
+#   patched-toolchain init                       # fresh copy of ~/.moon
+#   patched-toolchain apply path/to/patch.diff   # one or more diffs
+#   patched-toolchain rebundle                   # moon bundle for all targets
+#   patched-toolchain reset                      # remove the scratch dir
+#
+# Path is fixed to /tmp/moonbit-patched so MOON_TOOLCHAIN_ROOT pickup is
+# stable across invocations.
+
+set -euo pipefail
+
+ROOT=/tmp/moonbit-patched
+SRC="$HOME/.moon"
+
+usage() {
+  cat <<EOF
+usage: patched-toolchain <command> [args]
+
+commands:
+  init                       Fresh copy of \$HOME/.moon -> $ROOT
+  apply <diff> [<diff>...]   Apply unified diffs against $ROOT/lib/core
+  rebundle                   moon bundle --release for wasm / wasm-gc / js / native
+  status                     Show which files differ vs \$HOME/.moon
+  reset                      rm -rf $ROOT
+
+env vars:
+  TOOLCHAIN_DST   Override $ROOT (default: /tmp/moonbit-patched)
+EOF
+}
+
+ROOT="${TOOLCHAIN_DST:-$ROOT}"
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+  init)
+    rm -rf "$ROOT"
+    cp -r "$SRC" "$ROOT"
+    chmod -R u+w "$ROOT"
+    echo "patched-toolchain: snapshot $SRC -> $ROOT"
+    ;;
+  apply)
+    if [ $# -eq 0 ]; then
+      echo "patched-toolchain: apply needs at least one diff" >&2
+      exit 1
+    fi
+    for d in "$@"; do
+      echo "==> applying $d"
+      # Diffs in notes/*.diff have absolute headers like
+      #   --- /root/.moon/lib/core/<pkg>/<file>.mbt
+      #   +++ /tmp/moonbit-patched/lib/core/<pkg>/<file>.mbt
+      # Strip leading dirs so we get `lib/core/...` and apply with -p0
+      # from $ROOT.
+      # Strip absolute prefixes from --- / +++ lines so the diff applies
+      # cleanly with -p0 from $ROOT.
+      sed -E -e 's|^--- [^[:space:]]*/lib/core/|--- lib/core/|' \
+             -e 's|^\+\+\+ [^[:space:]]*/lib/core/|+++ lib/core/|' \
+        "$d" | patch -p0 -d "$ROOT"
+    done
+    ;;
+  rebundle)
+    cd "$ROOT/lib/core"
+    for t in wasm wasm-gc js native; do
+      echo "==> moon bundle --release --target $t"
+      PATH="$HOME/.moon/bin:$PATH" moon bundle --release --target "$t" >/dev/null
+    done
+    echo "patched-toolchain: rebundled $ROOT for 4 targets"
+    ;;
+  status)
+    if [ ! -d "$ROOT" ]; then
+      echo "patched-toolchain: $ROOT not initialized"
+      exit 0
+    fi
+    diff -rq "$SRC/lib/core" "$ROOT/lib/core" 2>/dev/null \
+      | grep -v '^Only in.*_build\|^Only in.*/_build' \
+      || echo "(no differences vs $SRC/lib/core)"
+    ;;
+  reset)
+    rm -rf "$ROOT"
+    echo "patched-toolchain: removed $ROOT"
+    ;;
+  ""|-h|--help|help)
+    usage
+    ;;
+  *)
+    echo "patched-toolchain: unknown command '$cmd'" >&2
+    usage >&2
+    exit 1
+    ;;
+esac
