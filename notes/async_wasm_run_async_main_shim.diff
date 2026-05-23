@@ -1,0 +1,42 @@
+--- /tmp/upstream/async/src/integration.mbt	2026-05-23 04:24:22.539221831 +0000
++++ /home/user/pprof-mbt/bench-async/.mooncakes/moonbitlang/async/src/integration.mbt	2026-05-23 05:13:12.632874440 +0000
+@@ -41,3 +41,23 @@
+   let _ = @coroutine.spawn(main)
+   @event_loop.reschedule()
+ }
++
++///|
++/// Scheduler-only entry for wasm / wasm-gc. async lib does not provide
++/// IO on these targets, so we just drain the coroutine ready queue.
++#coverage.skip
++#cfg(target="wasm")
++#doc(hidden)
++pub fn run_async_main(main : async () -> Unit) -> Unit {
++  let _ = @coroutine.spawn(main)
++  @event_loop.reschedule()
++}
++
++///|
++#coverage.skip
++#cfg(target="wasm-gc")
++#doc(hidden)
++pub fn run_async_main(main : async () -> Unit) -> Unit {
++  let _ = @coroutine.spawn(main)
++  @event_loop.reschedule()
++}
+--- /tmp/upstream/async/src/internal/event_loop/unimplemented.mbt	2026-05-23 04:24:22.559221831 +0000
++++ /home/user/pprof-mbt/bench-async/.mooncakes/moonbitlang/async/src/internal/event_loop/unimplemented.mbt	2026-05-23 05:13:02.820873856 +0000
+@@ -38,3 +38,13 @@
+   ignore(timer)
+   abort("`Timer::cancel()` is unimplemented on WASM backend")
+ }
++
++///|
++/// WASM stub for the scheduler-only reschedule entry point. Mirrors
++/// the JS shim in event_loop.js.mbt — no IO, just drains ready
++/// coroutines until none remain.
++pub fn reschedule() -> Unit {
++  while !@coroutine.no_more_work() {
++    @coroutine.reschedule()
++  }
++}

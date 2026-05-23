@@ -5,8 +5,8 @@
 
 ///|
 async fn main {
-  let n = 200000
-  let iters = 30
+  let n = 50000
+  let iters = 20
   let mut total = 0
   for _ in 0..<iters {
     @async.with_task_group(root => {

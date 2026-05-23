@@ -1,0 +1,1 @@
+feat(integration,event_loop): add wasm / wasm-gc scheduler-only run_async_main shim

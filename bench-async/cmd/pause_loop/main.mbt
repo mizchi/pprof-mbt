@@ -5,7 +5,7 @@
 
 ///|
 async fn main {
-  let n = 500000
+  let n = 100000
   let iters = 5
   let mut total = 0
   for _ in 0..<iters {
