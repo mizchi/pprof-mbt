@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/moonbit-demangle",
+    "crates/moonbit-wasm-host",
     "crates/firefox-to-pprof",
     "crates/wasmtime-guest-pprof",
     "runners/wasmtime-runner",
@@ -19,6 +20,7 @@ repository = "https://github.com/mizchi/pprof-mbt"
 [workspace.dependencies]
 # Internal crates — version is the workspace version above.
 moonbit-demangle = { path = "crates/moonbit-demangle", version = "0.1.0" }
+moonbit-wasm-host = { path = "crates/moonbit-wasm-host", version = "0.1.0" }
 firefox-to-pprof = { path = "crates/firefox-to-pprof", version = "0.1.0" }
 wasmtime-guest-pprof = { path = "crates/wasmtime-guest-pprof", version = "0.1.0" }
 

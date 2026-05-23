@@ -1,0 +1,15 @@
+[package]
+name = "moonbit-wasm-host"
+description = "Wasmtime host imports that satisfy a MoonBit-compiled wasm guest's println surface: spectest.print_char (legacy moonrun) and wasi_snapshot_preview1.fd_write (modern WASI). Use this alongside wasmtime-guest-pprof when profiling MoonBit wasm; skip it when profiling generic wasm."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+categories = ["development-tools::profiling", "wasm"]
+keywords = ["moonbit", "wasmtime", "host-imports"]
+
+[lib]
+
+[dependencies]
+anyhow.workspace = true
+wasmtime.workspace = true

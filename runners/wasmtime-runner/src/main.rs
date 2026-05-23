@@ -1,12 +1,16 @@
 // wasmtime-runner: profile a moonbit wasm (non-gc target) with wasmtime's
 // GuestProfiler and write the result as gzip'd pprof.
 //
-// Most of the work lives in the workspace crates:
-//   - wasmtime-guest-pprof: GuestProfiler driving + pprof emission
-//   - firefox-to-pprof:     the Firefox JSON → pprof conversion
-//   - moonbit-demangle:     symbol demangling
+// The work is split across workspace crates so each piece can be reused
+// in isolation:
+//   - wasmtime-guest-pprof: GuestProfiler driving + pprof emission (generic)
+//   - firefox-to-pprof:     the Firefox JSON → pprof conversion (generic)
+//   - moonbit-demangle:     symbol demangling (MoonBit-specific)
+//   - moonbit-wasm-host:    spectest.print_char + wasi fd_write host imports
+//                           that satisfy a MoonBit wasm guest's println
+//                           surface (MoonBit-specific)
 //
-// This file is just the CLI + the moonbit-specific spectest host import.
+// This file is just the CLI gluing them together.
 
 use std::fs;
 use std::path::PathBuf;
@@ -14,7 +18,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
 use clap::Parser;
-use wasmtime::{Caller, Config, Engine, Extern, Linker, Module, Store};
+use moonbit_wasm_host::{MoonbitStdio, MoonbitStdioState};
+use wasmtime::{Config, Engine, Linker, Module, Store};
 use wasmtime_guest_pprof::{
     json_to_pprof, ProfileSession, ProfilerHost, ProfilerHostExt as _, TakeProfileSession,
 };
@@ -43,16 +48,18 @@ struct Args {
     no_profile: bool,
 }
 
-/// Host state carried in the wasmtime `Store`. Owns the line buffer used
-/// by the moonrun-style `spectest.print_char` host function and the
-/// profile session.
+/// Host state carried in the wasmtime `Store`. Composes the
+/// moonbit-stdio buffers (for spectest.print_char / wasi fd_write) with
+/// the profile session.
 struct HostState {
-    line: Vec<u16>,
-    /// Accumulator for the WASI `fd_write` path. Modern moonbit emits
-    /// `wasi_snapshot_preview1.fd_write` instead of `spectest.print_char`;
-    /// we buffer by-byte and flush on '\n'.
-    stdout: Vec<u8>,
+    stdio: MoonbitStdioState,
     profiler: ProfileSession,
+}
+
+impl MoonbitStdio for HostState {
+    fn moonbit_stdio(&mut self) -> &mut MoonbitStdioState {
+        &mut self.stdio
+    }
 }
 
 impl ProfilerHost for HostState {
@@ -102,8 +109,7 @@ fn main() -> Result<()> {
     let mut store = Store::new(
         &engine,
         HostState {
-            line: Vec::new(),
-            stdout: Vec::new(),
+            stdio: MoonbitStdioState::default(),
             profiler: session,
         },
     );
@@ -115,72 +121,10 @@ fn main() -> Result<()> {
     };
 
     let mut linker: Linker<HostState> = Linker::new(&engine);
-    linker.func_wrap(
-        "spectest",
-        "print_char",
-        |mut caller: Caller<'_, HostState>, code: i32| {
-            // moonbit emits UTF-16 code units one at a time; flush on '\n'.
-            let state = caller.data_mut();
-            if code == b'\n' as i32 {
-                println!("{}", String::from_utf16_lossy(&state.line));
-                state.line.clear();
-            } else {
-                state.line.push(code as u16);
-            }
-        },
-    )?;
-    // Recent moonbit emits `wasi_snapshot_preview1.fd_write` for println.
-    // Minimal stub: walk the iovs, buffer bytes, flush stdout on newline.
-    linker.func_wrap(
-        "wasi_snapshot_preview1",
-        "fd_write",
-        |mut caller: Caller<'_, HostState>,
-         fd: i32,
-         iovs_ptr: i32,
-         iovs_len: i32,
-         nwritten_ptr: i32|
-         -> i32 {
-            let mem = match caller.get_export("memory") {
-                Some(Extern::Memory(m)) => m,
-                _ => return 8, // BADF
-            };
-            let mut total: u32 = 0;
-            let mut payload: Vec<u8> = Vec::new();
-            let data = mem.data(&caller);
-            for i in 0..iovs_len as usize {
-                let entry = iovs_ptr as usize + i * 8;
-                if entry + 8 > data.len() {
-                    return 28; // EINVAL-ish
-                }
-                let buf_ptr = u32::from_le_bytes(data[entry..entry + 4].try_into().unwrap()) as usize;
-                let buf_len = u32::from_le_bytes(data[entry + 4..entry + 8].try_into().unwrap()) as usize;
-                if buf_ptr + buf_len > data.len() {
-                    return 28;
-                }
-                payload.extend_from_slice(&data[buf_ptr..buf_ptr + buf_len]);
-                total += buf_len as u32;
-            }
-            // Write the byte-count back, then flush per-line into stdout/err.
-            let nwritten_bytes = total.to_le_bytes();
-            let mem_mut = mem.data_mut(&mut caller);
-            let np = nwritten_ptr as usize;
-            if np + 4 <= mem_mut.len() {
-                mem_mut[np..np + 4].copy_from_slice(&nwritten_bytes);
-            }
-            let state = caller.data_mut();
-            state.stdout.extend_from_slice(&payload);
-            while let Some(nl) = state.stdout.iter().position(|&b| b == b'\n') {
-                let line: Vec<u8> = state.stdout.drain(..=nl).collect();
-                let s = String::from_utf8_lossy(&line[..line.len() - 1]);
-                if fd == 2 {
-                    eprintln!("{}", s);
-                } else {
-                    println!("{}", s);
-                }
-            }
-            0
-        },
-    )?;
+    // Provide the moonbit println surface (legacy + WASI). For non-moonbit
+    // wasm this entire block goes away — just don't depend on
+    // moonbit-wasm-host.
+    moonbit_wasm_host::register(&mut linker)?;
 
     let instance = linker.instantiate(&mut store, &module)?;
     let start = instance.get_typed_func::<(), ()>(&mut store, "_start")?;
