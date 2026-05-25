@@ -6,19 +6,6 @@
 の 4 バックエンドでビルドし、各実行を [pprof](https://github.com/google/pprof)
 形式に正規化するプロファイリング道具一式。
 
-中身は **MoonBit 用の既製品**:
-
-- `moon-pprof` CLI 1 本で `profile / summary / bench` を実行
-- MoonBit のシンボルマングルを demangle し、4 バックエンドのプロファイルを
-  同じ pprof スキーマに揃える
-- 改善 PR 作成のための **baseline ↔ patched 比較ワークフロー** (`patched-toolchain`
-  / `patched-mooncakes` / `moon-pprof bench`)
-
-ですが、**内部ライブラリは MoonBit 非依存にしてある**。 `firefox-to-pprof` /
-`cpuprofile-to-pprof` / `wasmtime-guest-pprof` の Rust crate 群は
-AssemblyScript / Rust / Zig などの wasm にも転用可。
-[→ 詳細](#汎用-wasm-に転用する)
-
 ## インストール
 
 CLI 1 本だけ欲しい場合 (任意の wasm を `profile` / `summary` / `cpuprofile2pprof`
@@ -34,9 +21,30 @@ nix profile install github:mizchi/pprof-mbt           # 永続インストール
 ```
 
 `moon-pprof bench` を使うときだけは外部に `moon` / `node` / `samply` が要ります
-(下の "開発者向けセットアップ" を参照、 もしくは `nix develop` でまとめて入る)。
+(下のクイックスタートを参照、 もしくは `nix develop` でまとめて入る)。
+
+## 中身
+
+**MoonBit 用の既製品**:
+
+- `moon-pprof` CLI 1 本で `profile / summary / bench` を実行
+- MoonBit のシンボルマングルを demangle し、4 バックエンドのプロファイルを
+  同じ pprof スキーマに揃える
+- 改善 PR 作成のための **baseline ↔ patched 比較ワークフロー** (`patched-toolchain`
+  / `patched-mooncakes` / `moon-pprof bench`)
+
+ですが、**内部ライブラリは MoonBit 非依存にしてある**。 `firefox-to-pprof` /
+`cpuprofile-to-pprof` / `wasmtime-guest-pprof` の Rust crate 群は
+AssemblyScript / Rust / Zig などの wasm にも転用可。
+[→ 詳細](#汎用-wasm-に転用する)
 
 ## クイックスタート (リポジトリで開発する場合)
+
+`nix develop` の中では
+[moonbit-overlay](https://github.com/moonbit-community/moonbit-overlay)
+経由で `moon` が、その他 Node.js / Rust / wasmtime / samply / wabt /
+protobuf / graphviz が入る (`go` は visualization 用の `go tool pprof`
+のためだけに残してある。リポジトリ内に Go コードはなし)。
 
 ```sh
 nix develop
@@ -313,32 +321,6 @@ bench/                                  MoonBit ベンチ workload (ackermann / 
 bench-async/                            moonbitlang/async 検証用 (coroutine / HTTP server)
 bench-x/                                moonbitlang/x 検証用 (uuid / base64 / encoding / ...)
 notes/                                  調査ログ + upstream 向け PR 素材
-```
-
-## セットアップ詳細
-
-```sh
-nix develop
-```
-
-[moonbit-overlay](https://github.com/moonbit-community/moonbit-overlay)
-経由で `moon` が、その他 Node.js / Rust / wasmtime / samply / wabt /
-protobuf / graphviz が入る (`go` は visualization 用の `go tool pprof`
-のためだけに残してある。リポジトリ内に Go コードはなし)。
-
-```sh
-mkdir -p .bin
-
-# Rust workspace を release ビルド + .bin にコピー
-cargo build --workspace --release
-cp target/release/moon-pprof target/release/http-baseline-server .bin/
-
-# bash スクリプトを .bin に
-cp runners/patched-toolchain runners/patched-mooncakes .bin/
-chmod +x .bin/patched-toolchain .bin/patched-mooncakes
-
-# npm workspace は symlink 解決のみ
-npm install
 ```
 
 ## ベンチコード

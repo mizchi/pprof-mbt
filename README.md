@@ -7,20 +7,6 @@ format.
 
 > Japanese version: [README-ja.md](README-ja.md).
 
-The MoonBit-facing parts:
-
-- A single `moon-pprof` CLI for `profile` / `summary` / `bench` (plus
-  `cpuprofile2pprof` / `firefox2pprof` converters).
-- Demangles MoonBit symbols and lines up all four backends in the same
-  pprof schema.
-- **baseline ↔ patched comparison workflow** for upstream PR experiments
-  (`patched-toolchain` / `patched-mooncakes` / `moon-pprof bench`).
-
-The **internal libraries are MoonBit-agnostic**. The Rust crates
-`firefox-to-pprof` / `cpuprofile-to-pprof` / `wasmtime-guest-pprof` work
-unchanged for AssemblyScript / Rust / Zig wasm too.
-[→ Details](#reusing-for-non-moonbit-wasm)
-
 ## Install
 
 If you just want the CLI (any wasm → `profile` / `summary` /
@@ -36,10 +22,32 @@ nix profile install github:mizchi/pprof-mbt           # persistent install
 ```
 
 `moon-pprof bench` is the only subcommand that needs external `moon` /
-`node` / `samply` at runtime — see "developer setup" below, or `nix
-develop` to pull them all in.
+`node` / `samply` at runtime — see the Quickstart below, or `nix develop`
+to pull them all in.
+
+## What's inside
+
+The MoonBit-facing parts:
+
+- A single `moon-pprof` CLI for `profile` / `summary` / `bench` (plus
+  `cpuprofile2pprof` / `firefox2pprof` converters).
+- Demangles MoonBit symbols and lines up all four backends in the same
+  pprof schema.
+- **baseline ↔ patched comparison workflow** for upstream PR experiments
+  (`patched-toolchain` / `patched-mooncakes` / `moon-pprof bench`).
+
+The **internal libraries are MoonBit-agnostic**. The Rust crates
+`firefox-to-pprof` / `cpuprofile-to-pprof` / `wasmtime-guest-pprof` work
+unchanged for AssemblyScript / Rust / Zig wasm too.
+[→ Details](#reusing-for-non-moonbit-wasm)
 
 ## Quickstart (cloning the repo)
+
+Inside `nix develop`,
+[moonbit-overlay](https://github.com/moonbit-community/moonbit-overlay)
+brings in `moon`; the shell also has Node.js, Rust, wasmtime, samply,
+wabt, protobuf, and graphviz. (`go` is included only for `go tool pprof`
+visualisation — there's no Go code in this repo.)
 
 ```sh
 nix develop
@@ -323,32 +331,6 @@ bench/                                  MoonBit bench workloads (ackermann / fib
 bench-async/                            moonbitlang/async investigation (coroutine / HTTP server)
 bench-x/                                moonbitlang/x investigation (uuid / base64 / encoding / ...)
 notes/                                  investigation logs + upstream-PR materials
-```
-
-## Developer setup
-
-```sh
-nix develop
-```
-
-[moonbit-overlay](https://github.com/moonbit-community/moonbit-overlay)
-brings in `moon`; the shell also has Node.js, Rust, wasmtime, samply,
-wabt, protobuf, and graphviz. (`go` is included only for `go tool
-pprof` visualisation — there's no Go code in this repo.)
-
-```sh
-mkdir -p .bin
-
-# Build the Rust workspace in release mode and stage binaries.
-cargo build --workspace --release
-cp target/release/moon-pprof target/release/http-baseline-server .bin/
-
-# Stage the bash helpers.
-cp runners/patched-toolchain runners/patched-mooncakes .bin/
-chmod +x .bin/patched-toolchain .bin/patched-mooncakes
-
-# Resolve npm workspace symlinks.
-npm install
 ```
 
 ## Bench code
