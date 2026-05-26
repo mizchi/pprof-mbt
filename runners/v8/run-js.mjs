@@ -8,6 +8,8 @@
 import { Session } from "node:inspector/promises";
 import { readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { resolve as resolvePath } from "node:path";
+import { pathToFileURL } from "node:url";
 import vm from "node:vm";
 import { argv } from "node:process";
 
@@ -32,7 +34,10 @@ const usesRequire = /\brequire\s*\(/.test(source);
 
 let runOnce;
 if (usesRequire) {
-  const require = createRequire(jsPath);
+  // createRequire needs an absolute file URL or absolute path — the
+  // moonbit-emitted require() calls resolve relative to the .js file's
+  // location, so anchor here rather than to the runner.
+  const require = createRequire(pathToFileURL(resolvePath(jsPath)));
   const sandbox = {
     require,
     console,
