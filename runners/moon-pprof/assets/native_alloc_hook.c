@@ -21,11 +21,13 @@
 #include <dlfcn.h>
 #include <execinfo.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 static __thread int mpprof_in_hook = 0;
 
@@ -33,6 +35,34 @@ static FILE *mpprof_out = NULL;
 static uint64_t mpprof_counter = 0;
 static uint64_t mpprof_rate = 1;
 static pthread_mutex_t mpprof_mu = PTHREAD_MUTEX_INITIALIZER;
+static volatile sig_atomic_t mpprof_finished = 0;
+
+static void mpprof_finalize_once(void) {
+  // Idempotent flush+close. Called from both the destructor (clean
+  // exit) and the SIGTERM/SIGINT handler (driver's --duration timer
+  // for servers that never return). On the signal path we follow
+  // up with `_exit(0)` so no other atexit handlers run after this.
+  if (mpprof_finished) {
+    return;
+  }
+  mpprof_finished = 1;
+  if (mpprof_out) {
+    fflush(mpprof_out);
+    fclose(mpprof_out);
+    mpprof_out = NULL;
+  }
+}
+
+static void mpprof_on_signal(int signo) {
+  (void)signo;
+  // Strictly speaking `fclose` isn't async-signal-safe, but our FILE*
+  // is touched only from inside the mutex and from this handler, and
+  // the worst case is a partial last record which the Rust parser
+  // tolerates (records are self-delimiting). `_exit` skips other
+  // atexit/destructors, which is what we want — we already finalised.
+  mpprof_finalize_once();
+  _exit(0);
+}
 
 __attribute__((constructor))
 static void mpprof_init(void) {
@@ -48,17 +78,23 @@ static void mpprof_init(void) {
       mpprof_rate = (uint64_t)v;
     }
   }
+  // Install handlers only if we actually have a file to flush —
+  // otherwise leave the user binary's default signal disposition
+  // intact (so plain `moon build` binaries with the hook .o linked
+  // but no env vars behave normally).
+  if (mpprof_out) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = mpprof_on_signal;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGTERM, &sa, NULL);
+    sigaction(SIGINT, &sa, NULL);
+  }
 }
 
 __attribute__((destructor))
 static void mpprof_fini(void) {
-  // Flush + close. The driver opens the file post-exit; even a
-  // partial write is parseable since records are self-delimiting.
-  if (mpprof_out) {
-    fflush(mpprof_out);
-    fclose(mpprof_out);
-    mpprof_out = NULL;
-  }
+  mpprof_finalize_once();
 }
 
 // Public symbol called by the patched moonbit_malloc_inlined. Marked

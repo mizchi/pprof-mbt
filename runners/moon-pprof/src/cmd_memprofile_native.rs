@@ -79,6 +79,13 @@ pub struct Args {
     /// `moonbit_demangle::demangle`.
     #[arg(long)]
     pub no_demangle: bool,
+    /// Send SIGTERM to the patched binary after this many seconds. Use
+    /// for servers / event loops that never return on their own — the
+    /// linked hook installs a SIGTERM/SIGINT handler that flushes the
+    /// raw stream before `_exit(0)`. Default 0 = wait forever for the
+    /// binary to exit on its own.
+    #[arg(long, default_value_t = 0)]
+    pub duration: u64,
     /// Extra arguments forwarded to the user binary after the env vars
     /// are set. Use `--` to separate from moon-pprof's own flags.
     #[arg(last = true)]
@@ -217,21 +224,47 @@ pub fn run(args: Args) -> Result<()> {
         bail!("relink failed");
     }
 
-    // Step 6: run.
+    // Step 6: run. When --duration is set we spawn + wait so we can
+    // send SIGTERM ourselves; the hook's signal handler flushes the
+    // raw stream and then _exit(0)s, so the file is complete by the
+    // time wait() returns.
     let raw_path = env::temp_dir().join(format!(
         "moon-pprof-native-raw.{}.bin",
         std::process::id()
     ));
     let _ = fs::remove_file(&raw_path);
     let t0 = Instant::now();
-    let run_status = Command::new(&memprof_exe_path)
+    let mut child = Command::new(&memprof_exe_path)
         .args(&args.forward)
         .env("MOON_PPROF_RAW_OUTPUT", &raw_path)
         .env("MOON_PPROF_SAMPLE_RATE", sample_rate.to_string())
-        .status()
+        .spawn()
         .with_context(|| format!("spawning {}", memprof_exe_path.display()))?;
+    let run_status = if args.duration > 0 {
+        let pid = child.id();
+        let secs = args.duration;
+        let timer = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(secs));
+            // SAFETY: kill(pid, SIGTERM) is async-signal-safe; pid is
+            // owned by us (we haven't reaped it yet).
+            #[cfg(unix)]
+            unsafe {
+                libc::kill(pid as libc::pid_t, libc::SIGTERM);
+            }
+        });
+        let status = child.wait().context("waiting for patched binary")?;
+        // Drain the timer regardless; if the binary exited before the
+        // deadline the thread is still sleeping. Detach by ignoring it.
+        let _ = timer.join();
+        status
+    } else {
+        child.wait().context("waiting for patched binary")?
+    };
     let elapsed = t0.elapsed();
-    if !run_status.success() {
+    // With --duration the hook exits via _exit(0) → status is success.
+    // Without it, if the user binary itself failed, surface that but
+    // still try to parse whatever raw stream we got.
+    if !run_status.success() && args.duration == 0 {
         bail!(
             "patched binary exited with {run_status}; raw at {} may be partial",
             raw_path.display(),
