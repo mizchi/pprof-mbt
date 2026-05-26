@@ -1,0 +1,20 @@
+[package]
+name = "heapprofile-to-pprof"
+description = "Convert Node V8 `.heapprofile` (Inspector `HeapProfiler.SamplingHeapProfile`) into gzip'd pprof with alloc_objects/alloc_space sample types. Default symbol demangler is moonbit-demangle; swap it with `Builder::demangle_with` for other languages."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+categories = ["development-tools::profiling"]
+keywords = ["profiling", "pprof", "v8", "heapprofile", "node"]
+
+[lib]
+
+[dependencies]
+anyhow.workspace = true
+firefox-to-pprof.workspace = true
+flate2.workspace = true
+moonbit-demangle.workspace = true
+prost.workspace = true
+serde.workspace = true
+serde_json.workspace = true

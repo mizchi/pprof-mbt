@@ -17,6 +17,8 @@ use clap::{Parser, Subcommand};
 mod cmd_bench;
 mod cmd_cpuprofile2pprof;
 mod cmd_firefox2pprof;
+mod cmd_heapprofile2pprof;
+mod cmd_memprofile;
 mod cmd_profile;
 mod cmd_summary;
 
@@ -39,6 +41,10 @@ enum Command {
     Cpuprofile2pprof(cmd_cpuprofile2pprof::Args),
     /// Convert a Firefox Profiler JSON (samply / wasmtime) into gzip'd pprof.
     Firefox2pprof(cmd_firefox2pprof::Args),
+    /// Convert a Node V8 `.heapprofile` (sampling allocations) into gzip'd pprof.
+    Heapprofile2pprof(cmd_heapprofile2pprof::Args),
+    /// Capture an allocation profile of a MoonBit wasm by instrumenting moonbit.malloc.
+    Memprofile(cmd_memprofile::Args),
 }
 
 fn main() -> ExitCode {
@@ -68,6 +74,8 @@ fn main() -> ExitCode {
         Command::Bench(a) => cmd_bench::run(a),
         Command::Cpuprofile2pprof(a) => cmd_cpuprofile2pprof::run(a),
         Command::Firefox2pprof(a) => cmd_firefox2pprof::run(a),
+        Command::Heapprofile2pprof(a) => cmd_heapprofile2pprof::run(a),
+        Command::Memprofile(a) => cmd_memprofile::run(a),
     };
 
     match result {

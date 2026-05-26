@@ -10,6 +10,7 @@ bench/_build/
 
 # profile outputs
 *.cpuprofile
+*.heapprofile
 *.pb
 *.pb.gz
 *.prof

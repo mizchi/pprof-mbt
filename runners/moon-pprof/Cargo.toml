@@ -12,6 +12,9 @@ anyhow.workspace = true
 clap.workspace = true
 cpuprofile-to-pprof.workspace = true
 firefox-to-pprof.workspace = true
+heapprofile-to-pprof.workspace = true
+moonbit-demangle.workspace = true
+walrus = "0.26"
 flate2.workspace = true
 moonbit-wasm-host.workspace = true
 prost.workspace = true
@@ -26,3 +29,7 @@ libc = "0.2"
 [[bin]]
 name = "moon-pprof"
 path = "src/main.rs"
+
+[dev-dependencies]
+wasmprinter = "0.250.0"
+wat = "1.250.0"
