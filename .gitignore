@@ -3,7 +3,11 @@ result
 .envrc
 .bin/
 node_modules/
-.claude/
+# Ignore ephemeral .claude state (scheduled-task locks, etc.) but
+# track .claude/skills/ so per-project skills are versioned with the
+# code they describe.
+.claude/*
+!.claude/skills/
 
 # moonbit build artifacts
 bench/_build/
