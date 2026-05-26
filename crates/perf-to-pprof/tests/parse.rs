@@ -1,10 +1,12 @@
 use std::io::Read as _;
 
 use flate2::read::GzDecoder;
-use perf_to_pprof::{ConvertOptions, convert, parse};
+use perf_to_pprof::{ConvertOptions, Stats, convert, parse};
 use prost::Message as _;
 
 const FIXTURE: &str = include_str!("fixtures/sample.perf-script");
+const NO_PERIOD: &str = include_str!("fixtures/no-period.perf-script");
+const MANY_UNKNOWNS: &str = include_str!("fixtures/many-unknowns.perf-script");
 
 #[test]
 fn parses_three_samples_then_one_unknown() {
@@ -60,4 +62,34 @@ fn convert_aggregates_identical_stacks() {
     assert!(names.contains(&"hot_function"));
     assert!(names.contains(&"cold_function"));
     assert!(names.contains(&"[unknown]"));
+}
+
+#[test]
+fn stats_detects_missing_period() {
+    let samples = parse(NO_PERIOD).unwrap();
+    let stats = Stats::from_samples(&samples);
+    assert_eq!(stats.sample_count, 2);
+    assert_eq!(stats.period_sum, 2); // every sample defaulted to 1
+    assert!(stats.period_likely_missing());
+    assert!(stats.unknown_ratio() < 0.01);
+}
+
+#[test]
+fn stats_detects_high_unknown_ratio() {
+    let samples = parse(MANY_UNKNOWNS).unwrap();
+    let stats = Stats::from_samples(&samples);
+    assert_eq!(stats.sample_count, 2);
+    assert_eq!(stats.frame_count, 5);
+    assert_eq!(stats.unknown_frame_count, 4);
+    assert!(stats.unknown_ratio() > 0.5);
+    assert!(!stats.period_likely_missing()); // periods are real here
+}
+
+#[test]
+fn stats_clean_fixture_has_no_warnings() {
+    let samples = parse(FIXTURE).unwrap();
+    let stats = Stats::from_samples(&samples);
+    assert!(!stats.period_likely_missing());
+    // FIXTURE has one [unknown] frame out of 9 → well under 50 %.
+    assert!(stats.unknown_ratio() < 0.5);
 }

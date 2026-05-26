@@ -1,0 +1,6 @@
+main.exe 12345/12345    0.000000: cpu-clock:
+        ffff80008a9c0a3c hot_function+0x10 (/path/to/main.exe)
+        ffff80008a9c0b48 caller+0x20 (/path/to/main.exe)
+
+main.exe 12345/12345    0.001000: cpu-clock:
+        ffff80008a9c0d60 cold_function+0x40 (/path/to/main.exe)

@@ -50,16 +50,55 @@ pub fn run(args: Args) -> Result<()> {
         event_unit: args.event_unit,
         no_demangle: args.no_demangle,
     };
-    let pprof = perf_to_pprof::convert(&input, &opts)?;
+
+    let samples = perf_to_pprof::parse(&input)?;
+    let stats = perf_to_pprof::Stats::from_samples(&samples);
+    emit_warnings(&stats);
+
+    let pprof = perf_to_pprof::convert_from_samples(samples, &opts)?;
     if let Some(parent) = args.out.parent() {
         fs::create_dir_all(parent).ok();
     }
     fs::write(&args.out, &pprof)
         .with_context(|| format!("writing pprof to {}", args.out.display()))?;
     eprintln!(
-        "[moon-pprof perf2pprof] {} → {}",
+        "[moon-pprof perf2pprof] {} → {} ({} samples, {} frames)",
         args.input.display(),
-        args.out.display()
+        args.out.display(),
+        stats.sample_count,
+        stats.frame_count,
     );
     Ok(())
+}
+
+/// Warn the user about two common capture mistakes that produce a
+/// pprof you can still load but whose numbers are misleading.
+fn emit_warnings(stats: &perf_to_pprof::Stats) {
+    if stats.sample_count == 0 {
+        eprintln!(
+            "[moon-pprof perf2pprof] warning: parsed 0 samples — \
+             input may not be `perf script` text, or every sample was empty"
+        );
+        return;
+    }
+    if stats.period_likely_missing() {
+        eprintln!(
+            "[moon-pprof perf2pprof] warning: every sample has period=1 — \
+             re-capture with `perf record --weight` and `perf script \
+             -F comm,pid,tid,time,event,period,ip,sym,dso` so the pprof \
+             carries real wall-time units (otherwise `Total` will read as nanoseconds)"
+        );
+    }
+    let ratio = stats.unknown_ratio();
+    if ratio > 0.5 {
+        eprintln!(
+            "[moon-pprof perf2pprof] warning: {:.0}% of frames ({}/{}) came back as `[unknown]` — \
+             ensure the recorded binary's debug info is reachable to `perf script` \
+             (build with `cc -g`, run `perf script` in the same fs view that recorded, \
+             or pass `--symfs=<root>` so perf can find the DSO)",
+            ratio * 100.0,
+            stats.unknown_frame_count,
+            stats.frame_count,
+        );
+    }
 }

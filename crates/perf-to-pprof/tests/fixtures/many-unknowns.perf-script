@@ -1,0 +1,8 @@
+main.exe 12345/12345    0.000000:    1000000 cpu-clock:
+        ffff80008a9c0a3c [unknown] (/path/to/main.exe)
+        ffff80008a9c0b48 [unknown] (/path/to/main.exe)
+        ffff80008a9c0c54 some_function+0x10 (/path/to/main.exe)
+
+main.exe 12345/12345    0.001000:    1000000 cpu-clock:
+        ffff80008a9c0d60 [unknown] (/path/to/main.exe)
+        ffff80008a9c0e74 [unknown] (/path/to/main.exe)

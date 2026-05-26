@@ -66,6 +66,64 @@ pub fn convert(input: &str, opts: &ConvertOptions) -> Result<Vec<u8>> {
     encode(samples, opts)
 }
 
+/// Same as `convert` but takes pre-parsed samples. Useful when the
+/// caller wants to inspect samples (e.g. compute stats / surface
+/// warnings) before encoding.
+pub fn convert_from_samples(
+    samples: Vec<Sample>,
+    opts: &ConvertOptions,
+) -> Result<Vec<u8>> {
+    encode(samples, opts)
+}
+
+/// Aggregate diagnostics over a parsed perf-script capture. Cheap —
+/// O(samples × frames).
+#[derive(Debug, Default, Clone)]
+pub struct Stats {
+    pub sample_count: usize,
+    pub frame_count: usize,
+    pub unknown_frame_count: usize,
+    pub period_sum: u64,
+}
+
+impl Stats {
+    pub fn from_samples(samples: &[Sample]) -> Self {
+        let mut s = Stats::default();
+        s.sample_count = samples.len();
+        for sample in samples {
+            s.frame_count += sample.stack.len();
+            s.period_sum += sample.period;
+            for frame in &sample.stack {
+                if is_unresolved(&frame.symbol) {
+                    s.unknown_frame_count += 1;
+                }
+            }
+        }
+        s
+    }
+
+    /// True when every sample had period=1 (the parser's fallback when
+    /// the header line lacked a numeric weight). Strong hint that the
+    /// recording was missing `--weight` or that `perf script -F`
+    /// dropped the `period` field.
+    pub fn period_likely_missing(&self) -> bool {
+        self.sample_count > 0 && self.period_sum == self.sample_count as u64
+    }
+
+    /// Fraction of frames that came back as `[unknown]` / empty.
+    pub fn unknown_ratio(&self) -> f32 {
+        if self.frame_count == 0 {
+            0.0
+        } else {
+            self.unknown_frame_count as f32 / self.frame_count as f32
+        }
+    }
+}
+
+fn is_unresolved(sym: &str) -> bool {
+    sym.is_empty() || sym == "[unknown]"
+}
+
 // ─────────────────────────── parser ─────────────────────────────────────
 
 #[derive(Debug, Clone)]
