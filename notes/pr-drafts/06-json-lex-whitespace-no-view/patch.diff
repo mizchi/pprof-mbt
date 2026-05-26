@@ -1,0 +1,31 @@
+--- /tmp/lex_misc_orig.mbt	2026-05-26 17:26:42
++++ /tmp/moonbit-patched/lib/core/json/lex_misc.mbt	2026-05-26 17:27:14
+@@ -114,11 +114,24 @@
+ }
+ 
+ ///|
++// Hot path: this runs at the start of every `lex_value` / `lex_after_*`
++// step. The original implementation built a fresh `StringView` of the
++// remaining input and ran `lexmatch [ \t\r\n]+`, which allocated a
++// 12-byte StringView wrapper on every call. On the json_parse bench
++// (50 iterations of a 1000-element object) that was ~1.25M extra
++// allocations / ~14 MB of churn.
++//
++// JSON whitespace is ASCII-only, so we can scan UTF-16 code units
++// directly on the existing input view with the same semantics and zero
++// allocations.
+ fn ParseContext::lex_skip_whitespace(ctx : ParseContext) -> Unit {
+-  let rest = ctx.input.view(start_offset=ctx.offset, end_offset=ctx.end_offset)
+-  lexmatch rest with longest {
+-    ("[ \t\r\n]+", next) => ctx.offset = ctx.end_offset - next.length()
+-    _ => ()
++  while ctx.offset < ctx.end_offset {
++    let c = ctx.input.unsafe_get(ctx.offset)
++    if c == ' ' || c == '\t' || c == '\r' || c == '\n' {
++      ctx.offset = ctx.offset + 1
++    } else {
++      break
++    }
+   }
+ }
+ 
