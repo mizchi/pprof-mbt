@@ -8,12 +8,15 @@
 
 ## インストール
 
+> 最短経路は [`docs/quick-start.md`](docs/quick-start.md) — CLI を入れて、
+> 同梱の sample wasm を profile して、 summary を読むまでが 1 分で終わる。
+
 CLI 1 本だけ欲しい場合 (任意の wasm を `profile` / `summary` / `cpuprofile2pprof`
 / `firefox2pprof` する):
 
 ```sh
 # cargo (要: rustc 1.80+ と protoc が PATH に)
-cargo install --git https://github.com/mizchi/pprof-mbt --bin moon-pprof --locked
+cargo install --git https://github.com/mizchi/pprof-mbt moon-pprof --locked
 
 # nix (上記のビルド時 deps は flake に閉じ込め済み)
 nix run github:mizchi/pprof-mbt -- --help
@@ -379,7 +382,14 @@ notes/                                  調査ログ + upstream 向け PR 素材
 
 ## 既知の制約 / TODO
 
-- **メモリプロファイルは未対応** (CPU のみ)。
+- **メモリプロファイルは js + wasm + wasm-gc 対応**。 `moon-pprof
+  heapprofile2pprof` で Node V8 の sampling allocation profile を、
+  `moon-pprof memprofile` で wasm / wasm-gc を walrus instrumentation +
+  wasmtime backtrace 経由で pprof 化できる (英語 README の Memory
+  profiling 節を参照)。 wasm-gc 側は field-sum proxy で wasmtime 実 heap
+  consumption とは厳密一致しない。 大きい workload には
+  `--sample-rate 100` を渡すと ~22 倍速 + top site の誤差 0.1% 以内。
+  native はまだ CPU のみ。
 - **demangle はヒューリスティック**。impl / method / generic 修飾子
   (`_M0I…`, `_M0M…`, `GsE`/`GuE` 接尾辞) は `core::` プレフィックスを
   落とすなど不完全。
