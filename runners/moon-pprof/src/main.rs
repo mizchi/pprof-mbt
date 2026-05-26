@@ -20,6 +20,7 @@ mod cmd_firefox2pprof;
 mod cmd_heapprofile2pprof;
 mod cmd_memprofile;
 mod cmd_memprofile_native;
+mod cmd_perf2pprof;
 mod cmd_profile;
 mod cmd_summary;
 
@@ -48,6 +49,8 @@ enum Command {
     Memprofile(cmd_memprofile::Args),
     /// Capture an allocation profile of a MoonBit native binary by patching its generated <cmd>.c and relinking with a hook.
     MemprofileNative(cmd_memprofile_native::Args),
+    /// Convert Linux `perf script` textual output into gzip'd pprof.
+    Perf2pprof(cmd_perf2pprof::Args),
 }
 
 fn main() -> ExitCode {
@@ -80,6 +83,7 @@ fn main() -> ExitCode {
         Command::Heapprofile2pprof(a) => cmd_heapprofile2pprof::run(a),
         Command::Memprofile(a) => cmd_memprofile::run(a),
         Command::MemprofileNative(a) => cmd_memprofile_native::run(a),
+        Command::Perf2pprof(a) => cmd_perf2pprof::run(a),
     };
 
     match result {

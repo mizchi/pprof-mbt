@@ -6,6 +6,7 @@ members = [
     "crates/firefox-to-pprof",
     "crates/cpuprofile-to-pprof",
     "crates/heapprofile-to-pprof",
+    "crates/perf-to-pprof",
     "crates/wasmtime-guest-pprof",
     "runners/moon-pprof",
     "runners/http-baseline-server",
@@ -24,6 +25,7 @@ moonbit-wasm-host = { path = "crates/moonbit-wasm-host", version = "0.1.0" }
 firefox-to-pprof = { path = "crates/firefox-to-pprof", version = "0.1.0" }
 cpuprofile-to-pprof = { path = "crates/cpuprofile-to-pprof", version = "0.1.0" }
 heapprofile-to-pprof = { path = "crates/heapprofile-to-pprof", version = "0.1.0" }
+perf-to-pprof = { path = "crates/perf-to-pprof", version = "0.1.0" }
 wasmtime-guest-pprof = { path = "crates/wasmtime-guest-pprof", version = "0.1.0" }
 
 # Shared third-party deps. Pinned in one place so the runner and the

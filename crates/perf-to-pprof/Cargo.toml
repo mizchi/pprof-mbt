@@ -1,0 +1,18 @@
+[package]
+name = "perf-to-pprof"
+description = "Convert Linux `perf script` textual output into gzip'd pprof. Used to round out cross-backend profiling on Linux where samply isn't available (e.g. inside containers)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+categories = ["development-tools::profiling"]
+keywords = ["profiling", "pprof", "perf", "linux"]
+
+[lib]
+
+[dependencies]
+anyhow.workspace = true
+flate2.workspace = true
+moonbit-demangle.workspace = true
+firefox-to-pprof.workspace = true
+prost.workspace = true

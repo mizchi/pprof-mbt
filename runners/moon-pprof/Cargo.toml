@@ -14,6 +14,7 @@ cpuprofile-to-pprof.workspace = true
 firefox-to-pprof.workspace = true
 heapprofile-to-pprof.workspace = true
 moonbit-demangle.workspace = true
+perf-to-pprof.workspace = true
 walrus = "0.26"
 flate2.workspace = true
 moonbit-wasm-host.workspace = true

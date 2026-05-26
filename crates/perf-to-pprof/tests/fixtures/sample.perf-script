@@ -1,0 +1,16 @@
+main.exe 12345/12345    0.000000:    1000000 cpu-clock:
+        ffff80008a9c0a3c hot_function+0x10 (/path/to/main.exe)
+        ffff80008a9c0b48 caller+0x20 (/path/to/main.exe)
+        ffff80008a9c0c54 __libc_start_main+0x88 (/usr/lib/aarch64-linux-gnu/libc.so.6)
+
+main.exe 12345/12345    0.001000:    1000000 cpu-clock:
+        ffff80008a9c0a3c hot_function+0x10 (/path/to/main.exe)
+        ffff80008a9c0b48 caller+0x20 (/path/to/main.exe)
+        ffff80008a9c0c54 __libc_start_main+0x88 (/usr/lib/aarch64-linux-gnu/libc.so.6)
+
+main.exe 12345/12345    0.002000:    1000000 cpu-clock:
+        ffff80008a9c0d60 cold_function+0x40 (/path/to/main.exe)
+        ffff80008a9c0c54 __libc_start_main+0x88 (/usr/lib/aarch64-linux-gnu/libc.so.6)
+
+main.exe 12345/12345    0.003000:    1000000 cpu-clock:
+        ffff80008a9c1000 [unknown] ([unknown])

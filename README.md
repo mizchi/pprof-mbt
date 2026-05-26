@@ -90,6 +90,7 @@ go tool pprof -http :8000 wasm-gc.pb.gz              # browser UI
 | `moon-pprof memprofile <wasm>` | Allocation profile via wasm instrumentation. wasm (non-gc): wraps `moonbit.malloc` (covers raw + `moonbit.gc.malloc`). wasm-gc: rewrites every `struct.new` / `array.new*` opcode so the host hook fires with the alloc size. |
 | `moon-pprof memprofile-native <exe>` | Allocation profile for a `--target native` binary. Patches the generated `<cmd>.c`'s inline `moonbit_malloc` to call a backtrace-capturing hook, relinks via the project's own cc command, and emits pprof from the recorded stream. (macOS + Linux.) |
 | `moon-pprof firefox2pprof <in> <out>` | Firefox Profiler JSON → pprof. `--source samply --syms <sidecar>` for samply (RVA + inline expansion), default `--source wasmtime-guest` for wasmtime guest output. |
+| `moon-pprof perf2pprof <perf-script.txt>` | Linux `perf script` textual output → pprof gzip. Pair with `perf record -F 999 -g --weight -e cpu-clock` so the per-sample period is included. Lets you profile native MoonBit binaries on Linux where samply isn't available (containers, restricted hosts). |
 
 `--mem-pattern <regex>` overrides the `summary` mem-mgmt classifier
 (default is MoonBit's). `moon-pprof bench` supports two orthogonal
