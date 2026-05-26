@@ -5,7 +5,8 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-publish = false
+categories = ["development-tools::profiling", "command-line-utilities"]
+keywords = ["moonbit", "pprof", "profiling", "wasmtime", "samply"]
 
 [dependencies]
 anyhow.workspace = true
