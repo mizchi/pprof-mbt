@@ -8,9 +8,12 @@ MoonBit toolchain required.
 Requires `rustc` 1.80+ and `protoc` on `PATH`.
 
 ```sh
-cargo install --git https://github.com/mizchi/pprof-mbt moon-pprof --locked
+cargo install moon-pprof --locked
 moon-pprof --help
 ```
+
+(Or `cargo install --git https://github.com/mizchi/pprof-mbt moon-pprof --locked`
+to track `main` ahead of the published release.)
 
 Nix users can skip the toolchain dance entirely:
 

@@ -17,13 +17,17 @@ If you just want the CLI (any wasm → `profile` / `summary` /
 `cpuprofile2pprof` / `firefox2pprof`):
 
 ```sh
-# cargo (requires rustc 1.80+ and `protoc` on PATH)
-cargo install --git https://github.com/mizchi/pprof-mbt moon-pprof --locked
+# cargo from crates.io (requires rustc 1.80+ and `protoc` on PATH)
+cargo install moon-pprof --locked
 
 # nix (build-time deps live inside the flake)
 nix run github:mizchi/pprof-mbt -- --help
 nix profile install github:mizchi/pprof-mbt           # persistent install
 ```
+
+If you want to track `main` instead of the published release, swap
+the cargo line for `cargo install --git
+https://github.com/mizchi/pprof-mbt moon-pprof --locked`.
 
 `moon-pprof bench` is the only subcommand that needs external `moon` /
 `node` / `samply` at runtime — see the Quickstart below, or `nix develop`
@@ -381,11 +385,15 @@ external projects.
 
 ### Rust
 
+All seven crates are on crates.io. Pick the ones you need:
+
 ```toml
 [dependencies]
 moonbit-demangle      = "0.1"
 firefox-to-pprof      = "0.1"  # generic: samply / wasmtime JSON → pprof
 cpuprofile-to-pprof   = "0.1"  # generic: V8 .cpuprofile → pprof
+heapprofile-to-pprof  = "0.1"  # generic: V8 .heapprofile → pprof
+perf-to-pprof         = "0.1"  # generic: Linux `perf script` text → pprof
 wasmtime-guest-pprof  = "0.1"  # generic: drop into a wasmtime app
 moonbit-wasm-host     = "0.1"  # registers the moonbit wasm host imports in one call
 ```

@@ -15,13 +15,17 @@ CLI 1 本だけ欲しい場合 (任意の wasm を `profile` / `summary` / `cpup
 / `firefox2pprof` する):
 
 ```sh
-# cargo (要: rustc 1.80+ と protoc が PATH に)
-cargo install --git https://github.com/mizchi/pprof-mbt moon-pprof --locked
+# cargo (crates.io から、要: rustc 1.80+ と protoc が PATH に)
+cargo install moon-pprof --locked
 
 # nix (上記のビルド時 deps は flake に閉じ込め済み)
 nix run github:mizchi/pprof-mbt -- --help
 nix profile install github:mizchi/pprof-mbt           # 永続インストール
 ```
+
+`main` を追いたいときは cargo 行を
+`cargo install --git https://github.com/mizchi/pprof-mbt moon-pprof --locked`
+に差し替える。
 
 `moon-pprof bench` を使うときだけは外部に `moon` / `node` / `samply` が要ります
 (下のクイックスタートを参照、 もしくは `nix develop` でまとめて入る)。
@@ -212,11 +216,15 @@ Rust と npm の 2 系統で外部プロジェクトから取り込み可能。
 
 ### Rust
 
+7 crate すべて crates.io にある。必要なものだけ抜く:
+
 ```toml
 [dependencies]
 moonbit-demangle      = "0.1"
 firefox-to-pprof      = "0.1"  # 汎用: samply / wasmtime の JSON を pprof に
 cpuprofile-to-pprof   = "0.1"  # 汎用: V8 .cpuprofile を pprof に
+heapprofile-to-pprof  = "0.1"  # 汎用: V8 .heapprofile を pprof に
+perf-to-pprof         = "0.1"  # 汎用: Linux `perf script` のテキストを pprof に
 wasmtime-guest-pprof  = "0.1"  # 汎用: wasmtime app に組み込む
 moonbit-wasm-host     = "0.1"  # moonbit wasm の host import を 1 行で登録
 ```
