@@ -382,14 +382,18 @@ notes/                                  調査ログ + upstream 向け PR 素材
 
 ## 既知の制約 / TODO
 
-- **メモリプロファイルは js + wasm + wasm-gc 対応**。 `moon-pprof
+- **メモリプロファイルは js + wasm + wasm-gc + native (macOS) 対応**。 `moon-pprof
   heapprofile2pprof` で Node V8 の sampling allocation profile を、
   `moon-pprof memprofile` で wasm / wasm-gc を walrus instrumentation +
   wasmtime backtrace 経由で pprof 化できる (英語 README の Memory
   profiling 節を参照)。 wasm-gc 側は field-sum proxy で wasmtime 実 heap
   consumption とは厳密一致しない。 大きい workload には
   `--sample-rate 100` を渡すと ~22 倍速 + top site の誤差 0.1% 以内。
-  native はまだ CPU のみ。
+  native は `moon-pprof memprofile-native <exe>` で対応 — 生成済み
+  `<cmd>.c` の `moonbit_malloc_inlined` を patch し、 backtrace 取得 hook を
+  link して再 cc → 走らせる。 これは `mimalloc` が静的リンクされてて
+  `DYLD_INSERT_LIBRARIES` では捕まえられない問題への対処。 sample-rate=100
+  で ~70 倍速。 Linux はまだ未対応。
 - **demangle はヒューリスティック**。impl / method / generic 修飾子
   (`_M0I…`, `_M0M…`, `GsE`/`GuE` 接尾辞) は `core::` プレフィックスを
   落とすなど不完全。

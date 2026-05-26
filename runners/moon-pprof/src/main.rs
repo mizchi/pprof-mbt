@@ -19,6 +19,7 @@ mod cmd_cpuprofile2pprof;
 mod cmd_firefox2pprof;
 mod cmd_heapprofile2pprof;
 mod cmd_memprofile;
+mod cmd_memprofile_native;
 mod cmd_profile;
 mod cmd_summary;
 
@@ -45,6 +46,8 @@ enum Command {
     Heapprofile2pprof(cmd_heapprofile2pprof::Args),
     /// Capture an allocation profile of a MoonBit wasm by instrumenting moonbit.malloc.
     Memprofile(cmd_memprofile::Args),
+    /// Capture an allocation profile of a MoonBit native binary by patching its generated <cmd>.c and relinking with a hook.
+    MemprofileNative(cmd_memprofile_native::Args),
 }
 
 fn main() -> ExitCode {
@@ -76,6 +79,7 @@ fn main() -> ExitCode {
         Command::Firefox2pprof(a) => cmd_firefox2pprof::run(a),
         Command::Heapprofile2pprof(a) => cmd_heapprofile2pprof::run(a),
         Command::Memprofile(a) => cmd_memprofile::run(a),
+        Command::MemprofileNative(a) => cmd_memprofile_native::run(a),
     };
 
     match result {

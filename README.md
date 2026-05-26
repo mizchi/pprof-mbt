@@ -88,6 +88,7 @@ go tool pprof -http :8000 wasm-gc.pb.gz              # browser UI
 | `moon-pprof cpuprofile2pprof <in> <out>` | V8 `.cpuprofile` → pprof gzip (with MoonBit demangle by default; `--no-demangle` to disable). |
 | `moon-pprof heapprofile2pprof <in> <out>` | V8 `.heapprofile` (sampling allocations) → pprof gzip with `alloc_objects` / `alloc_space` sample types. |
 | `moon-pprof memprofile <wasm>` | Allocation profile via wasm instrumentation. wasm (non-gc): wraps `moonbit.malloc` (covers raw + `moonbit.gc.malloc`). wasm-gc: rewrites every `struct.new` / `array.new*` opcode so the host hook fires with the alloc size. |
+| `moon-pprof memprofile-native <exe>` | Allocation profile for a `--target native` binary. Patches the generated `<cmd>.c`'s inline `moonbit_malloc` to call a backtrace-capturing hook, relinks via the project's own cc command, and emits pprof from the recorded stream. (macOS only.) |
 | `moon-pprof firefox2pprof <in> <out>` | Firefox Profiler JSON → pprof. `--source samply --syms <sidecar>` for samply (RVA + inline expansion), default `--source wasmtime-guest` for wasmtime guest output. |
 
 `--mem-pattern <regex>` overrides the `summary` mem-mgmt classifier
@@ -298,6 +299,49 @@ workload that allocates A,B,A,B,… correlated with the sampling stride
 will be biased. For exact answers, use `--sample-rate 1` on a shorter
 iteration count.
 
+### Memory profiling (native)
+
+```sh
+npm run build:native
+.bin/moon-pprof memprofile-native \
+  bench/_build/native/release/build/cmd/json_parse/json_parse.exe \
+  --out native-mem.pb.gz --sample-rate 100
+go tool pprof -alloc_space -http :8000 native-mem.pb.gz
+```
+
+MoonBit's `--target native` backend statically links **mimalloc** into
+every binary, and the user code's `moonbit_malloc(size)` macro inlines
+to `libc_malloc(...)` → mimalloc's local symbol. That bind is resolved
+at link time, so `DYLD_INSERT_LIBRARIES` / `LD_PRELOAD` of `malloc`
+never sees moonbit allocations (verified by counting: on a 197 KB JSON
+× 50-iter workload, libc-malloc interpose catches ~190 events, all
+from libsystem startup).
+
+`moon-pprof memprofile-native` works around this by **patching the
+generated C** and recompiling:
+
+1. From the `.exe` path, find the moon project root (containing
+   `moon.mod.json`) and grab the cc command that built it via
+   `moon build --target native --release --dry-run`.
+2. Rewrite `moonbit_malloc_inlined`'s body in `<cmd>.c` to call
+   `__moon_pprof_alloc_hook(size)` before the real `libc_malloc`.
+3. Compile a bundled `native_alloc_hook.c` (uses `backtrace(3)` +
+   `dladdr(3)`) with the same cc flags.
+4. Re-run the original cc command with the patched `.c` + hook `.o`,
+   output to `<cmd>.memprof.exe` alongside the original.
+5. Run `<cmd>.memprof.exe`. The hook writes a raw stream of
+   `{bytes, symbols}` records to a tempfile.
+6. moon-pprof aggregates and emits gzip'd pprof with sample types
+   `alloc_objects/count` + `alloc_space/bytes`. `drop_frames` hides
+   the hook, mimalloc, and runtime helpers so user code is the leaf.
+
+Same `--sample-rate <N>` semantics as the wasm path. On the
+JSON parse workload, `--sample-rate 1` takes ~41 s and
+`--sample-rate 100` takes ~580 ms (~70× faster) with matching
+top-site attribution. macOS only for now — Linux LD_PRELOAD on the
+patched binary works in principle, but the dlsym bootstrap shim
+hasn't been ported.
+
 ### wasm (wasmtime + GuestProfiler)
 
 ```sh
@@ -501,14 +545,20 @@ upstream-PR drafting material.
 
 ## Known limitations / TODO
 
-- **Memory profiling: js, wasm, and wasm-gc.** `moon-pprof
+- **Memory profiling: js, wasm, wasm-gc, and native (macOS).** `moon-pprof
   heapprofile2pprof` converts a Node V8 sampling allocation profile
   (see [Memory profiling (js)](#memory-profiling-js)). `moon-pprof
   memprofile` instruments allocation sites in either wasm backend (see
   [Memory profiling (wasm and wasm-gc)](#memory-profiling-wasm-and-wasm-gc)) —
   wasm wraps `moonbit.malloc`, wasm-gc rewrites every `struct.new` /
-  `array.new*` opcode. wasm-gc sizes are a field-sum proxy. Native is
-  still CPU-only (would need samply + LD_PRELOAD / heaptrack).
+  `array.new*` opcode. wasm-gc sizes are a field-sum proxy.
+  `moon-pprof memprofile-native` patches the generated `<cmd>.c` and
+  relinks via the project's own cc command so the per-alloc hook fires
+  inside `moonbit_malloc_inlined` — bypassing the statically-linked
+  mimalloc that would otherwise hide allocations from `LD_PRELOAD` /
+  `DYLD_INSERT_LIBRARIES` (see
+  [Memory profiling (native)](#memory-profiling-native)). macOS only;
+  Linux LD_PRELOAD bootstrap shim hasn't been ported.
 - **The demangler is heuristic.** Impl / method / generic markers
   (`_M0I…`, `_M0M…`, `GsE`/`GuE` suffixes) are only partially decoded —
   for example, the `core::` prefix on stdlib methods is dropped.
