@@ -1,5 +1,5 @@
 {
-  description = "pprof-mbt: profiling MoonBit across wasm-gc/wasm/js/native backends";
+  description = "moon-pprof: profiling MoonBit across wasm-gc/wasm/js/native backends";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -15,8 +15,8 @@
           overlays = [ moonbit-overlay.overlays.default ];
         };
 
-        # CLI build. `nix run github:mizchi/pprof-mbt -- profile ...`
-        # and `nix profile install github:mizchi/pprof-mbt` both end up
+        # CLI build. `nix run github:mizchi/moon-pprof -- profile ...`
+        # and `nix profile install github:mizchi/moon-pprof` both end up
         # here. Only the `moon-pprof` binary is exposed; the workspace's
         # `http-baseline-server` is dev-only and not built.
         moon-pprof = pkgs.rustPlatform.buildRustPackage {
@@ -33,7 +33,7 @@
           doCheck = true;
           meta = with pkgs.lib; {
             description = "Unified CLI for profiling MoonBit code across wasm-gc / wasm / js / native backends";
-            homepage = "https://github.com/mizchi/pprof-mbt";
+            homepage = "https://github.com/mizchi/moon-pprof";
             license = licenses.asl20;
             mainProgram = "moon-pprof";
             platforms = platforms.unix;

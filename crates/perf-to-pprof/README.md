@@ -7,7 +7,7 @@ cross-backend profiling on Linux where
 inside containers, on kernels without certain perf features, or
 when you're stuck with `perf` because that's what the host has).
 
-Standalone — does not require the rest of the `pprof-mbt` workspace
+Standalone — does not require the rest of the `moon-pprof` workspace
 beyond the in-tree pprof proto. MoonBit symbol demangling is
 applied automatically; non-MoonBit symbols pass through unchanged.
 

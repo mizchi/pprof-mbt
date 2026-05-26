@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/mizchi/pprof-mbt.git",
+    "url": "https://github.com/mizchi/moon-pprof.git",
     "directory": "packages/moonbit-wasm-host"
   },
   "keywords": [

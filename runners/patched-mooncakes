@@ -9,7 +9,7 @@
 #
 # Usage:
 #   patched-mooncakes init <bench-dir>
-#       Snapshot <bench-dir>/.mooncakes/ to /tmp/pprof-mbt-mooncakes/<name>/.
+#       Snapshot <bench-dir>/.mooncakes/ to /tmp/moon-pprof-mooncakes/<name>/.
 #       Idempotent: refuses to overwrite an existing snapshot.
 #
 #   patched-mooncakes apply <bench-dir> <pkg> <diff>...
@@ -30,7 +30,7 @@
 
 set -euo pipefail
 
-SCRATCH_ROOT="${MOONCAKES_SCRATCH:-/tmp/pprof-mbt-mooncakes}"
+SCRATCH_ROOT="${MOONCAKES_SCRATCH:-/tmp/moon-pprof-mooncakes}"
 
 usage() {
   cat <<EOF
@@ -44,7 +44,7 @@ commands:
   reset   <bench-dir>                       rm -rf the scratch snapshot
 
 env vars:
-  MOONCAKES_SCRATCH   Override scratch root (default: /tmp/pprof-mbt-mooncakes)
+  MOONCAKES_SCRATCH   Override scratch root (default: /tmp/moon-pprof-mooncakes)
 EOF
 }
 

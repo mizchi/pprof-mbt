@@ -1,4 +1,4 @@
-# pprof-mbt
+# moon-pprof
 
 > English version: [README.md](README.md).
 
@@ -19,12 +19,12 @@ CLI 1 本だけ欲しい場合 (任意の wasm を `profile` / `summary` / `cpup
 cargo install moon-pprof --locked
 
 # nix (上記のビルド時 deps は flake に閉じ込め済み)
-nix run github:mizchi/pprof-mbt -- --help
-nix profile install github:mizchi/pprof-mbt           # 永続インストール
+nix run github:mizchi/moon-pprof -- --help
+nix profile install github:mizchi/moon-pprof           # 永続インストール
 ```
 
 `main` を追いたいときは cargo 行を
-`cargo install --git https://github.com/mizchi/pprof-mbt moon-pprof --locked`
+`cargo install --git https://github.com/mizchi/moon-pprof moon-pprof --locked`
 に差し替える。
 
 `moon-pprof bench` を使うときだけは外部に `moon` / `node` / `samply` が要ります
@@ -118,16 +118,16 @@ go tool pprof -http :8000 wasm-gc.pb.gz              # ブラウザで UI
 
 ```sh
 .bin/patched-mooncakes init bench-x
-cp -r /tmp/pprof-mbt-mooncakes/bench-x /tmp/pprof-mbt-mooncakes/bench-x.patched
-( cd /tmp/pprof-mbt-mooncakes/bench-x.patched/moonbitlang/x \
+cp -r /tmp/moon-pprof-mooncakes/bench-x /tmp/moon-pprof-mooncakes/bench-x.patched
+( cd /tmp/moon-pprof-mooncakes/bench-x.patched/moonbitlang/x \
   && patch -p1 < $(pwd)/notes/x-pr-drafts/04-uuid-tostring-inplace/patch.diff )
 
 .bin/moon-pprof bench \
   --bench-dir bench-x \
   --backends native,wasm-gc,js \
   --workloads uuid_parse \
-  --mooncakes-baseline /tmp/pprof-mbt-mooncakes/bench-x \
-  --mooncakes-patched /tmp/pprof-mbt-mooncakes/bench-x.patched \
+  --mooncakes-baseline /tmp/moon-pprof-mooncakes/bench-x \
+  --mooncakes-patched /tmp/moon-pprof-mooncakes/bench-x.patched \
   --runs 3
 ```
 

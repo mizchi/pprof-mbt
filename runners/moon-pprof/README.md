@@ -29,7 +29,7 @@ on prost-build).
 | `memprofile <wasm>` | Per-alloc profile via wasm instrumentation. |
 | `memprofile-native <exe>` | Per-alloc profile of a `--target native` binary (patch-and-relink, macOS + Linux). |
 
-See the [main repo](https://github.com/mizchi/pprof-mbt) for the
+See the [main repo](https://github.com/mizchi/moon-pprof) for the
 broader workflow (Quickstart, baseline ↔ patched bench comparisons,
 host shims).
 

@@ -12,15 +12,15 @@ cargo install moon-pprof --locked
 moon-pprof --help
 ```
 
-(Or `cargo install --git https://github.com/mizchi/pprof-mbt moon-pprof --locked`
+(Or `cargo install --git https://github.com/mizchi/moon-pprof moon-pprof --locked`
 to track `main` ahead of the published release.)
 
 Nix users can skip the toolchain dance entirely:
 
 ```sh
-nix run github:mizchi/pprof-mbt -- --help
+nix run github:mizchi/moon-pprof -- --help
 # or persistently:
-nix profile install github:mizchi/pprof-mbt
+nix profile install github:mizchi/moon-pprof
 ```
 
 ## 2. Grab a sample wasm
@@ -29,7 +29,7 @@ A 4.7 KB MoonBit `wasm-gc` binary that exercises ackermann / fib /
 mandelbrot lives in this repo at `docs/samples/main.wasm`:
 
 ```sh
-curl -fSLO https://raw.githubusercontent.com/mizchi/pprof-mbt/main/docs/samples/main.wasm
+curl -fSLO https://raw.githubusercontent.com/mizchi/moon-pprof/main/docs/samples/main.wasm
 ```
 
 ## 3. Profile and summarize
@@ -66,11 +66,11 @@ go tool pprof -http :8000 main.pb.gz
 Open <http://localhost:8000> and switch views from the **VIEW** menu
 (Top / Graph / Flame Graph / Source).
 
-No `go` installed? `nix develop github:mizchi/pprof-mbt` drops you into a
+No `go` installed? `nix develop github:mizchi/moon-pprof` drops you into a
 shell with `go` + `graphviz` ready:
 
 ```sh
-nix develop github:mizchi/pprof-mbt -c go tool pprof -http :8000 main.pb.gz
+nix develop github:mizchi/moon-pprof -c go tool pprof -http :8000 main.pb.gz
 ```
 
 ## Next steps

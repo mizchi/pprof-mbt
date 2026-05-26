@@ -1,4 +1,4 @@
-# pprof-mbt
+# moon-pprof
 
 A profiling toolkit for [MoonBit](https://www.moonbitlang.com/) that builds
 the same code across `native` / `wasm-gc` / `wasm` / `js` backends and
@@ -21,13 +21,13 @@ If you just want the CLI (any wasm → `profile` / `summary` /
 cargo install moon-pprof --locked
 
 # nix (build-time deps live inside the flake)
-nix run github:mizchi/pprof-mbt -- --help
-nix profile install github:mizchi/pprof-mbt           # persistent install
+nix run github:mizchi/moon-pprof -- --help
+nix profile install github:mizchi/moon-pprof           # persistent install
 ```
 
 If you want to track `main` instead of the published release, swap
 the cargo line for `cargo install --git
-https://github.com/mizchi/pprof-mbt moon-pprof --locked`.
+https://github.com/mizchi/moon-pprof moon-pprof --locked`.
 
 `moon-pprof bench` is the only subcommand that needs external `moon` /
 `node` / `samply` at runtime — see the Quickstart below, or `nix develop`
@@ -128,16 +128,16 @@ reproducing the bigint PR:
 
 ```sh
 .bin/patched-mooncakes init bench-x
-cp -r /tmp/pprof-mbt-mooncakes/bench-x /tmp/pprof-mbt-mooncakes/bench-x.patched
-( cd /tmp/pprof-mbt-mooncakes/bench-x.patched/moonbitlang/x \
+cp -r /tmp/moon-pprof-mooncakes/bench-x /tmp/moon-pprof-mooncakes/bench-x.patched
+( cd /tmp/moon-pprof-mooncakes/bench-x.patched/moonbitlang/x \
   && patch -p1 < $(pwd)/notes/x-pr-drafts/04-uuid-tostring-inplace/patch.diff )
 
 .bin/moon-pprof bench \
   --bench-dir bench-x \
   --backends native,wasm-gc,js \
   --workloads uuid_parse \
-  --mooncakes-baseline /tmp/pprof-mbt-mooncakes/bench-x \
-  --mooncakes-patched /tmp/pprof-mbt-mooncakes/bench-x.patched \
+  --mooncakes-baseline /tmp/moon-pprof-mooncakes/bench-x \
+  --mooncakes-patched /tmp/moon-pprof-mooncakes/bench-x.patched \
   --runs 3
 ```
 

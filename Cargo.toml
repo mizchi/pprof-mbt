@@ -16,7 +16,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
-repository = "https://github.com/mizchi/pprof-mbt"
+repository = "https://github.com/mizchi/moon-pprof"
 
 [workspace.dependencies]
 # Internal crates — version is the workspace version above.
