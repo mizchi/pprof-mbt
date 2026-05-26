@@ -88,7 +88,7 @@ go tool pprof -http :8000 wasm-gc.pb.gz              # browser UI
 | `moon-pprof cpuprofile2pprof <in> <out>` | V8 `.cpuprofile` → pprof gzip (with MoonBit demangle by default; `--no-demangle` to disable). |
 | `moon-pprof heapprofile2pprof <in> <out>` | V8 `.heapprofile` (sampling allocations) → pprof gzip with `alloc_objects` / `alloc_space` sample types. |
 | `moon-pprof memprofile <wasm>` | Allocation profile via wasm instrumentation. wasm (non-gc): wraps `moonbit.malloc` (covers raw + `moonbit.gc.malloc`). wasm-gc: rewrites every `struct.new` / `array.new*` opcode so the host hook fires with the alloc size. |
-| `moon-pprof memprofile-native <exe>` | Allocation profile for a `--target native` binary. Patches the generated `<cmd>.c`'s inline `moonbit_malloc` to call a backtrace-capturing hook, relinks via the project's own cc command, and emits pprof from the recorded stream. (macOS only.) |
+| `moon-pprof memprofile-native <exe>` | Allocation profile for a `--target native` binary. Patches the generated `<cmd>.c`'s inline `moonbit_malloc` to call a backtrace-capturing hook, relinks via the project's own cc command, and emits pprof from the recorded stream. (macOS + Linux.) |
 | `moon-pprof firefox2pprof <in> <out>` | Firefox Profiler JSON → pprof. `--source samply --syms <sidecar>` for samply (RVA + inline expansion), default `--source wasmtime-guest` for wasmtime guest output. |
 
 `--mem-pattern <regex>` overrides the `summary` mem-mgmt classifier
@@ -338,9 +338,14 @@ generated C** and recompiling:
 Same `--sample-rate <N>` semantics as the wasm path. On the
 JSON parse workload, `--sample-rate 1` takes ~41 s and
 `--sample-rate 100` takes ~580 ms (~70× faster) with matching
-top-site attribution. macOS only for now — Linux LD_PRELOAD on the
-patched binary works in principle, but the dlsym bootstrap shim
-hasn't been ported.
+top-site attribution.
+
+Works on macOS (Mach-O) and Linux (glibc ELF — the relink appends
+`-rdynamic -ldl -lpthread` so `dladdr` can see MoonBit's static
+symbols and the hook can lock its mutex). A Docker-based reproducer
+lives at [`notes/linux-memprofile/`](notes/linux-memprofile/) —
+`bash notes/linux-memprofile/run.sh` builds an aarch64 Linux image
+with the MoonBit toolchain and runs an end-to-end check.
 
 ### wasm (wasmtime + GuestProfiler)
 
@@ -545,7 +550,7 @@ upstream-PR drafting material.
 
 ## Known limitations / TODO
 
-- **Memory profiling: js, wasm, wasm-gc, and native (macOS).** `moon-pprof
+- **Memory profiling: js, wasm, wasm-gc, and native (macOS + Linux).** `moon-pprof
   heapprofile2pprof` converts a Node V8 sampling allocation profile
   (see [Memory profiling (js)](#memory-profiling-js)). `moon-pprof
   memprofile` instruments allocation sites in either wasm backend (see
@@ -557,8 +562,7 @@ upstream-PR drafting material.
   inside `moonbit_malloc_inlined` — bypassing the statically-linked
   mimalloc that would otherwise hide allocations from `LD_PRELOAD` /
   `DYLD_INSERT_LIBRARIES` (see
-  [Memory profiling (native)](#memory-profiling-native)). macOS only;
-  Linux LD_PRELOAD bootstrap shim hasn't been ported.
+  [Memory profiling (native)](#memory-profiling-native)).
 - **The demangler is heuristic.** Impl / method / generic markers
   (`_M0I…`, `_M0M…`, `GsE`/`GuE` suffixes) are only partially decoded —
   for example, the `core::` prefix on stdlib methods is dropped.

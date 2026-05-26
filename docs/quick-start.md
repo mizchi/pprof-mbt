@@ -83,7 +83,7 @@ nix develop github:mizchi/pprof-mbt -c go tool pprof -http :8000 main.pb.gz
   (add `--sample-rate 100` on large workloads — within 0.1 % of the
   exact top sites and ~22 × faster on a 13 M-alloc JSON parse).
 - Profile allocations of a MoonBit `--target native` binary by
-  patching its generated C and relinking with a hook (macOS only):
+  patching its generated C and relinking with a hook (macOS + Linux glibc):
   `moon-pprof memprofile-native path/to/cmd.exe --out native-mem.pb.gz --sample-rate 100`.
 - Convert a Firefox Profiler / samply JSON:
   `moon-pprof firefox2pprof in.json out.pb.gz`

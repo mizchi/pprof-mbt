@@ -1,5 +1,7 @@
 //! `moon-pprof memprofile-native <path/to/main.exe>` — allocation
-//! profile of a MoonBit `--target native` binary.
+//! profile of a MoonBit `--target native` binary. Works on macOS
+//! (Mach-O) and Linux (glibc ELF — verified in
+//! `notes/linux-memprofile/`).
 //!
 //! ## Why this is more work than the wasm path
 //!
@@ -462,6 +464,16 @@ fn rebuild_cc_argv(
         i += 1;
     }
     out.push(hook_o.to_string_lossy().into_owned());
+    // Linux ELF only exports symbols listed in the dynamic table; static
+    // / `extern` C functions defined in the same exe are invisible to
+    // `dladdr` without `-rdynamic`. The hook also needs libdl
+    // (`dladdr`) and libpthread (the mutex). macOS Mach-O exports
+    // everything by default and links dl/pthread implicitly.
+    if cfg!(target_os = "linux") {
+        out.push("-rdynamic".to_string());
+        out.push("-ldl".to_string());
+        out.push("-lpthread".to_string());
+    }
     Ok(out)
 }
 
@@ -723,10 +735,11 @@ fn demangle_for_display(raw: &str) -> String {
     // dladdr returns symbols with the platform's C linkage prefix
     // (`_` on macOS Mach-O, none on Linux ELF). MoonBit's mangle
     // starts with `_M…`, so on macOS the dladdr name looks like
-    // `__M0FP…` — strip one leading `_` before demangling.
-    let stripped = raw.strip_prefix('_').unwrap_or(raw);
-    let pretty = moonbit_demangle::demangle(stripped);
-    if pretty == stripped {
+    // `__M0FP…`. `moonbit_demangle::demangle` strips leading `_`s
+    // itself, so the raw name works on either platform; we don't
+    // need to pre-strip.
+    let pretty = moonbit_demangle::demangle(raw);
+    if pretty == raw {
         raw.to_string()
     } else {
         pretty
