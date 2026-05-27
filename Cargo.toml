@@ -5,6 +5,9 @@ members = [
     "crates/moonbit-wasm-host",
     "crates/firefox-to-pprof",
     "crates/cpuprofile-to-pprof",
+    "crates/chrome-trace-to-pprof",
+    "crates/pprof-to-chrome-trace",
+    "crates/pprof-stack-formats",
     "crates/heapprofile-to-pprof",
     "crates/perf-to-pprof",
     "crates/wasmtime-guest-pprof",
@@ -13,20 +16,23 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/mizchi/moon-pprof"
 
 [workspace.dependencies]
 # Internal crates — version is the workspace version above.
-moonbit-demangle = { path = "crates/moonbit-demangle", version = "0.1.0" }
-moonbit-wasm-host = { path = "crates/moonbit-wasm-host", version = "0.1.0" }
-firefox-to-pprof = { path = "crates/firefox-to-pprof", version = "0.1.0" }
-cpuprofile-to-pprof = { path = "crates/cpuprofile-to-pprof", version = "0.1.0" }
-heapprofile-to-pprof = { path = "crates/heapprofile-to-pprof", version = "0.1.0" }
-perf-to-pprof = { path = "crates/perf-to-pprof", version = "0.1.0" }
-wasmtime-guest-pprof = { path = "crates/wasmtime-guest-pprof", version = "0.1.0" }
+moonbit-demangle = { path = "crates/moonbit-demangle", version = "0.1.1" }
+moonbit-wasm-host = { path = "crates/moonbit-wasm-host", version = "0.1.1" }
+firefox-to-pprof = { path = "crates/firefox-to-pprof", version = "0.1.1" }
+cpuprofile-to-pprof = { path = "crates/cpuprofile-to-pprof", version = "0.1.1" }
+chrome-trace-to-pprof = { path = "crates/chrome-trace-to-pprof", version = "0.1.1" }
+pprof-to-chrome-trace = { path = "crates/pprof-to-chrome-trace", version = "0.1.1" }
+pprof-stack-formats = { path = "crates/pprof-stack-formats", version = "0.1.1" }
+heapprofile-to-pprof = { path = "crates/heapprofile-to-pprof", version = "0.1.1" }
+perf-to-pprof = { path = "crates/perf-to-pprof", version = "0.1.1" }
+wasmtime-guest-pprof = { path = "crates/wasmtime-guest-pprof", version = "0.1.1" }
 
 # Shared third-party deps. Pinned in one place so the runner and the
 # library crates stay in lockstep.

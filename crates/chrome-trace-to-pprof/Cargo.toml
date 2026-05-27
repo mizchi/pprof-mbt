@@ -1,0 +1,23 @@
+[package]
+name = "chrome-trace-to-pprof"
+description = "Convert Chrome trace-event JSON containing V8 CPU profiler Profile/ProfileChunk events into gzip'd pprof."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+categories = ["development-tools::profiling"]
+keywords = ["profiling", "pprof", "chrome-trace", "trace-event", "v8"]
+readme = "README.md"
+
+[lib]
+
+[dependencies]
+anyhow.workspace = true
+cpuprofile-to-pprof.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+firefox-to-pprof.workspace = true
+flate2.workspace = true
+prost.workspace = true

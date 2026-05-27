@@ -1,0 +1,22 @@
+[package]
+name = "pprof-stack-formats"
+description = "Convert pprof CPU profiles to folded stacks and Speedscope JSON, and convert Speedscope sampled profiles back to pprof."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+categories = ["development-tools::profiling"]
+keywords = ["profiling", "pprof", "speedscope", "flamegraph", "folded"]
+readme = "README.md"
+
+[lib]
+
+[dependencies]
+anyhow.workspace = true
+firefox-to-pprof.workspace = true
+flate2.workspace = true
+prost.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]

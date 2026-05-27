@@ -5,6 +5,12 @@
 //!   * `summary <file>` — print self-time / mem-mgmt rollup
 //!   * `summary --diff <a> <b>` — diff two profiles at function granularity
 //!   * `bench` — drive cross-backend benches (baseline ↔ patched)
+//!   * `chrometrace2pprof <in> <out>` — convert Chrome trace-event JSON to pprof
+//!   * `folded2pprof <in> <out>` — convert folded stacks to pprof
+//!   * `pprof2chrometrace <in> <out>` — convert pprof to Chrome trace-event JSON
+//!   * `pprof2folded <in> <out>` — convert pprof to folded stacks
+//!   * `pprof2speedscope <in> <out>` — convert pprof to Speedscope JSON
+//!   * `speedscope2pprof <in> <out>` — convert Speedscope sampled JSON to pprof
 //!
 //! Replaces three previous binaries (wasmtime-runner, pprof-summary,
 //! bench-runner). The implementation of each subcommand lives in its
@@ -15,17 +21,26 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 mod cmd_bench;
+mod cmd_chrometrace2pprof;
 mod cmd_cpuprofile2pprof;
 mod cmd_firefox2pprof;
+mod cmd_folded2pprof;
 mod cmd_heapprofile2pprof;
 mod cmd_memprofile;
 mod cmd_memprofile_native;
 mod cmd_perf2pprof;
+mod cmd_pprof2chrometrace;
+mod cmd_pprof2folded;
+mod cmd_pprof2speedscope;
 mod cmd_profile;
+mod cmd_speedscope2pprof;
 mod cmd_summary;
 
 #[derive(Parser, Debug)]
-#[command(name = "moon-pprof", about = "Profile MoonBit code across native / wasm-gc / wasm / js backends.")]
+#[command(
+    name = "moon-pprof",
+    about = "Profile MoonBit code across native / wasm-gc / wasm / js backends."
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -41,16 +56,28 @@ enum Command {
     Bench(cmd_bench::Args),
     /// Convert a Node V8 `.cpuprofile` into gzip'd pprof.
     Cpuprofile2pprof(cmd_cpuprofile2pprof::Args),
+    /// Convert Chrome trace-event JSON with V8 CPU profile chunks into gzip'd pprof.
+    Chrometrace2pprof(cmd_chrometrace2pprof::Args),
     /// Convert a Firefox Profiler JSON (samply / wasmtime) into gzip'd pprof.
     Firefox2pprof(cmd_firefox2pprof::Args),
+    /// Convert folded stack text into gzip'd pprof.
+    Folded2pprof(cmd_folded2pprof::Args),
     /// Convert a Node V8 `.heapprofile` (sampling allocations) into gzip'd pprof.
     Heapprofile2pprof(cmd_heapprofile2pprof::Args),
-    /// Capture an allocation profile of a MoonBit wasm by instrumenting moonbit.malloc.
+    /// Capture an allocation profile of a MoonBit wasm, optionally with Chrome trace allocation timeline.
     Memprofile(cmd_memprofile::Args),
-    /// Capture an allocation profile of a MoonBit native binary by patching its generated <cmd>.c and relinking with a hook.
+    /// Capture allocation or retained-heap profile of a MoonBit native binary by patching its generated <cmd>.c and relinking with a hook.
     MemprofileNative(cmd_memprofile_native::Args),
     /// Convert Linux `perf script` textual output into gzip'd pprof.
     Perf2pprof(cmd_perf2pprof::Args),
+    /// Convert pprof into synthetic Chrome trace-event JSON.
+    Pprof2chrometrace(cmd_pprof2chrometrace::Args),
+    /// Convert pprof into folded stack text.
+    Pprof2folded(cmd_pprof2folded::Args),
+    /// Convert pprof into Speedscope JSON.
+    Pprof2speedscope(cmd_pprof2speedscope::Args),
+    /// Convert Speedscope sampled JSON into gzip'd pprof.
+    Speedscope2pprof(cmd_speedscope2pprof::Args),
 }
 
 fn main() -> ExitCode {
@@ -79,11 +106,17 @@ fn main() -> ExitCode {
         Command::Summary(a) => cmd_summary::run(a),
         Command::Bench(a) => cmd_bench::run(a),
         Command::Cpuprofile2pprof(a) => cmd_cpuprofile2pprof::run(a),
+        Command::Chrometrace2pprof(a) => cmd_chrometrace2pprof::run(a),
         Command::Firefox2pprof(a) => cmd_firefox2pprof::run(a),
+        Command::Folded2pprof(a) => cmd_folded2pprof::run(a),
         Command::Heapprofile2pprof(a) => cmd_heapprofile2pprof::run(a),
         Command::Memprofile(a) => cmd_memprofile::run(a),
         Command::MemprofileNative(a) => cmd_memprofile_native::run(a),
         Command::Perf2pprof(a) => cmd_perf2pprof::run(a),
+        Command::Pprof2chrometrace(a) => cmd_pprof2chrometrace::run(a),
+        Command::Pprof2folded(a) => cmd_pprof2folded::run(a),
+        Command::Pprof2speedscope(a) => cmd_pprof2speedscope::run(a),
+        Command::Speedscope2pprof(a) => cmd_speedscope2pprof::run(a),
     };
 
     match result {

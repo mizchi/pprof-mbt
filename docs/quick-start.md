@@ -77,20 +77,38 @@ nix develop github:mizchi/moon-pprof -c go tool pprof -http :8000 main.pb.gz
 
 - Convert a Chrome / Node V8 `.cpuprofile`:
   `moon-pprof cpuprofile2pprof in.cpuprofile out.pb.gz`
+- Convert a Chrome trace-event JSON containing V8 CPU profile chunks:
+  `moon-pprof chrometrace2pprof trace.json out.pb.gz`
+- Convert a pprof CPU profile into synthetic Chrome trace-event JSON:
+  `moon-pprof pprof2chrometrace in.pb.gz trace.json`
+- Convert pprof into folded stacks or Speedscope:
+  `moon-pprof pprof2folded in.pb.gz out.folded`
+  `moon-pprof pprof2speedscope in.pb.gz out.speedscope.json`
+- Convert folded stacks back to pprof, for example off-CPU / blocking
+  folded output:
+  `moon-pprof folded2pprof in.folded out.pb.gz`
+- Convert Speedscope sampled JSON back to pprof:
+  `moon-pprof speedscope2pprof out.speedscope.json out.pb.gz`
 - Convert a Node V8 `.heapprofile` (sampling allocations) into a pprof
   with `alloc_objects` / `alloc_space` sample types:
   `moon-pprof heapprofile2pprof in.heapprofile out.pb.gz`
 - Profile allocations of any MoonBit wasm or wasm-gc via walrus
   instrumentation + wasmtime backtraces:
   `moon-pprof memprofile path/to/main.wasm --out wasm-mem.pb.gz`
+  Add `--trace-out wasm-alloc.trace.json` to write a Chrome trace
+  allocation timeline (`bytes` / `objects` counters).
   (add `--sample-rate 100` on large workloads — within 0.1 % of the
   exact top sites and ~22 × faster on a 13 M-alloc JSON parse).
 - Profile allocations of a MoonBit `--target native` binary by
   patching its generated C and relinking with a hook (macOS + Linux glibc):
   `moon-pprof memprofile-native path/to/cmd.exe --out native-mem.pb.gz --sample-rate 100`.
+  Add `--retained --sample-rate 1` to emit exact `inuse_objects` /
+  `inuse_space` retained heap at process exit.
 - Convert a Firefox Profiler / samply JSON:
   `moon-pprof firefox2pprof in.json out.pb.gz`
 - Build and profile your own MoonBit project across all four backends —
   see the [README](../README.md) Quickstart section. Memory profiling
   is supported on the js backend via
   [`npm run profile:js:heap`](../README.md#memory-profiling-js).
+- For the full pprof / Chrome trace / Speedscope / folded stack matrix,
+  see [Profile formats](profile-formats.md).

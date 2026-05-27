@@ -18,7 +18,10 @@
 //! calls a `__moon_pprof_alloc_hook(size_t)` *before* the real
 //! `libc_malloc`, link in our hook .o that captures `backtrace()` +
 //! `dladdr()` and dumps a raw stream, then convert the stream to pprof
-//! on the Rust side after the user binary exits.
+//! on the Rust side after the user binary exits. With `--retained`, the
+//! patch calls `__moon_pprof_alloc_ptr_hook(ptr, size)` after allocation
+//! and wraps `moonbit_free(obj)` with `__moon_pprof_free_hook(obj)` so
+//! the Rust side can emit `inuse_objects` / `inuse_space`.
 //!
 //! ## End-to-end flow
 //!
@@ -30,8 +33,8 @@
 //!    for the `cc … -o …/<name>.exe` line for our target.
 //! 4. Read the generated `.c`, replace the body of
 //!    `moonbit_malloc_inlined` with one that calls
-//!    `__moon_pprof_alloc_hook`, write it to a sibling
-//!    `<name>.memprof.c`.
+//!    `__moon_pprof_alloc_hook` (or the pointer hook for `--retained`),
+//!    write it to a sibling `<name>.memprof.c`.
 //! 5. Compile our bundled `native_alloc_hook.c` with the same `cc` to
 //!    a sibling `.memprof_hook.o`.
 //! 6. Re-run the original `cc` command with the patched `.c` swapped
@@ -41,6 +44,8 @@
 //!    `MOON_PPROF_SAMPLE_RATE`.
 //! 8. Read the raw record stream, aggregate `(frames → count, bytes)`,
 //!    demangle MoonBit symbols, encode pprof, gzip, write to `--out`.
+//!    In retained mode, freed sampled allocations are removed before
+//!    aggregation.
 
 use std::collections::HashMap;
 use std::env;
@@ -50,16 +55,18 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{anyhow, bail, Context as _, Result};
 use clap::Parser;
-use flate2::Compression;
 use flate2::write::GzEncoder;
+use flate2::Compression;
 use prost::Message;
 
 use firefox_to_pprof::proto;
 
 const HOOK_SOURCE: &str = include_str!("../assets/native_alloc_hook.c");
 const HOOK_SYMBOL: &str = "__moon_pprof_alloc_hook";
+const ALLOC_PTR_HOOK_SYMBOL: &str = "__moon_pprof_alloc_ptr_hook";
+const FREE_HOOK_SYMBOL: &str = "__moon_pprof_free_hook";
 
 #[derive(Parser, Debug)]
 #[command(
@@ -75,6 +82,10 @@ pub struct Args {
     /// `--sample-rate` flag on the wasm `memprofile` subcommand.
     #[arg(long, default_value_t = 1)]
     pub sample_rate: u32,
+    /// Emit a retained-heap profile (`inuse_objects` / `inuse_space`) by
+    /// tracking sampled allocation pointers until `moonbit_free`.
+    #[arg(long)]
+    pub retained: bool,
     /// Pass raw mangled symbols through instead of running them through
     /// `moonbit_demangle::demangle`.
     #[arg(long)]
@@ -93,11 +104,17 @@ pub struct Args {
 }
 
 pub fn run(args: Args) -> Result<()> {
-    let original_exe = args.exe.canonicalize().with_context(|| {
-        format!("looking up native exe at {}", args.exe.display())
-    })?;
+    let original_exe = args
+        .exe
+        .canonicalize()
+        .with_context(|| format!("looking up native exe at {}", args.exe.display()))?;
     let out_abs = absolutize(&args.out)?;
     let sample_rate = args.sample_rate.max(1);
+    let heap_mode = if args.retained {
+        HeapProfileMode::Retained
+    } else {
+        HeapProfileMode::Alloc
+    };
 
     let project = find_project_root(&original_exe)?;
     let cmd_name = derive_cmd_name(&original_exe)?;
@@ -180,7 +197,7 @@ pub fn run(args: Args) -> Result<()> {
     // Step 3: patch generated .c.
     let original_c_text = fs::read_to_string(&generated_c)
         .with_context(|| format!("reading generated C at {}", generated_c.display()))?;
-    let patched_c_text = patch_moonbit_malloc(&original_c_text)?;
+    let patched_c_text = patch_moonbit_malloc(&original_c_text, heap_mode)?;
     let patched_c_path = generated_c.with_file_name(format!("{cmd_name}.memprof.c"));
     fs::write(&patched_c_path, &patched_c_text)
         .with_context(|| format!("writing patched C to {}", patched_c_path.display()))?;
@@ -228,16 +245,19 @@ pub fn run(args: Args) -> Result<()> {
     // send SIGTERM ourselves; the hook's signal handler flushes the
     // raw stream and then _exit(0)s, so the file is complete by the
     // time wait() returns.
-    let raw_path = env::temp_dir().join(format!(
-        "moon-pprof-native-raw.{}.bin",
-        std::process::id()
-    ));
+    let raw_path =
+        env::temp_dir().join(format!("moon-pprof-native-raw.{}.bin", std::process::id()));
     let _ = fs::remove_file(&raw_path);
     let t0 = Instant::now();
-    let mut child = Command::new(&memprof_exe_path)
+    let mut run_cmd = Command::new(&memprof_exe_path);
+    run_cmd
         .args(&args.forward)
         .env("MOON_PPROF_RAW_OUTPUT", &raw_path)
-        .env("MOON_PPROF_SAMPLE_RATE", sample_rate.to_string())
+        .env("MOON_PPROF_SAMPLE_RATE", sample_rate.to_string());
+    if args.retained {
+        run_cmd.env("MOON_PPROF_RETAINED", "1");
+    }
+    let mut child = run_cmd
         .spawn()
         .with_context(|| format!("spawning {}", memprof_exe_path.display()))?;
     let run_status = if args.duration > 0 {
@@ -281,8 +301,17 @@ pub fn run(args: Args) -> Result<()> {
 
     // Step 7: parse → aggregate → encode pprof.
     let raw_bytes = fs::read(&raw_path).context("reading raw alloc stream")?;
-    let samples = parse_raw_stream(&raw_bytes, sample_rate)?;
-    let pprof = encode_pprof(samples, args.no_demangle)?;
+    let samples = if args.retained {
+        parse_retained_raw_stream(&raw_bytes, sample_rate)?
+    } else {
+        parse_raw_stream(&raw_bytes, sample_rate)?
+    };
+    let profile_kind = if args.retained {
+        HeapProfileKind::Inuse
+    } else {
+        HeapProfileKind::Alloc
+    };
+    let pprof = encode_pprof(samples, args.no_demangle, profile_kind)?;
     if let Some(parent) = out_abs.parent() {
         fs::create_dir_all(parent).ok();
     }
@@ -294,9 +323,10 @@ pub fn run(args: Args) -> Result<()> {
     let _ = fs::remove_file(&raw_path);
 
     eprintln!(
-        "[moon-pprof memprofile-native] {} in {:.2?} (sample-rate={}) → {}",
+        "[moon-pprof memprofile-native] {} in {:.2?} (mode={}, sample-rate={}) → {}",
         memprof_exe_path.display(),
         elapsed,
+        heap_mode.label(),
         sample_rate,
         out_abs.display(),
     );
@@ -485,9 +515,7 @@ fn rebuild_cc_argv(
             i += 2;
             continue;
         }
-        if a == &orig_c_str
-            || a.ends_with(&format!("/{orig_c_name}"))
-            || a.ends_with(&orig_c_name)
+        if a == &orig_c_str || a.ends_with(&format!("/{orig_c_name}")) || a.ends_with(&orig_c_name)
         {
             out.push(patched_c.to_string_lossy().into_owned());
             i += 1;
@@ -512,7 +540,22 @@ fn rebuild_cc_argv(
 
 // ──────────────────────── source patcher ────────────────────────────────
 
-fn patch_moonbit_malloc(src: &str) -> Result<String> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HeapProfileMode {
+    Alloc,
+    Retained,
+}
+
+impl HeapProfileMode {
+    fn label(self) -> &'static str {
+        match self {
+            HeapProfileMode::Alloc => "alloc",
+            HeapProfileMode::Retained => "retained",
+        }
+    }
+}
+
+fn patch_moonbit_malloc(src: &str, mode: HeapProfileMode) -> Result<String> {
     // We need to inject a call to `__moon_pprof_alloc_hook(size)`
     // *before* the libc_malloc call inside `moonbit_malloc_inlined`.
     // Approach: insert a forward declaration up top, then rewrite the
@@ -530,9 +573,9 @@ fn patch_moonbit_malloc(src: &str) -> Result<String> {
     // track moonbit's exact whitespace.
 
     let signature = "static void *moonbit_malloc_inlined(size_t size) {";
-    let start = src
-        .find(signature)
-        .ok_or_else(|| anyhow!("could not find `moonbit_malloc_inlined` definition in generated C"))?;
+    let start = src.find(signature).ok_or_else(|| {
+        anyhow!("could not find `moonbit_malloc_inlined` definition in generated C")
+    })?;
     // Walk forward to find the matching close brace at depth 0.
     let body_start = start + signature.len();
     let mut depth = 1; // we're already inside the `{`
@@ -554,8 +597,9 @@ fn patch_moonbit_malloc(src: &str) -> Result<String> {
         bail!("unbalanced braces while scanning moonbit_malloc_inlined");
     }
 
-    let replacement = format!(
-        "static void *moonbit_malloc_inlined(size_t size) {{\n  \
+    let replacement = match mode {
+        HeapProfileMode::Alloc => format!(
+            "static void *moonbit_malloc_inlined(size_t size) {{\n  \
             extern void {HOOK_SYMBOL}(size_t);\n  \
             {HOOK_SYMBOL}(size);\n  \
             struct moonbit_object *ptr = (struct moonbit_object *)libc_malloc(\n        \
@@ -563,14 +607,42 @@ fn patch_moonbit_malloc(src: &str) -> Result<String> {
             ptr->rc = 1;\n  \
             return ptr + 1;\n\
         }}"
-    );
+        ),
+        HeapProfileMode::Retained => format!(
+            "static void *moonbit_malloc_inlined(size_t size) {{\n  \
+            extern void {ALLOC_PTR_HOOK_SYMBOL}(void *, size_t);\n  \
+            struct moonbit_object *ptr = (struct moonbit_object *)libc_malloc(\n        \
+                sizeof(struct moonbit_object) + size);\n  \
+            ptr->rc = 1;\n  \
+            void *obj = ptr + 1;\n  \
+            {ALLOC_PTR_HOOK_SYMBOL}(obj, size);\n  \
+            return obj;\n\
+        }}"
+        ),
+    };
 
     let mut out = String::with_capacity(src.len() + replacement.len());
     out.push_str(&src[..start]);
     out.push_str(&replacement);
     out.push_str(&src[end..]);
 
-    Ok(out)
+    if mode == HeapProfileMode::Retained {
+        patch_moonbit_free(&out)
+    } else {
+        Ok(out)
+    }
+}
+
+fn patch_moonbit_free(src: &str) -> Result<String> {
+    let needle = "#define moonbit_free(obj) libc_free(Moonbit_object_header(obj))";
+    let replacement = format!(
+        "extern void {FREE_HOOK_SYMBOL}(void *);\n\
+         #define moonbit_free(obj) ({FREE_HOOK_SYMBOL}((void *)(obj)), libc_free(Moonbit_object_header(obj)))"
+    );
+    if !src.contains(needle) {
+        bail!("could not find `moonbit_free` macro in generated C");
+    }
+    Ok(src.replacen(needle, &replacement, 1))
 }
 
 // ──────────────────────── raw stream parser ─────────────────────────────
@@ -580,6 +652,13 @@ struct SampleMap(HashMap<Vec<String>, SampleAgg>);
 
 #[derive(Default, Clone, Copy)]
 struct SampleAgg {
+    count: i64,
+    bytes: i64,
+}
+
+#[derive(Clone)]
+struct LiveAlloc {
+    frames: Vec<String>,
     count: i64,
     bytes: i64,
 }
@@ -631,6 +710,90 @@ fn parse_raw_stream(buf: &[u8], sample_rate: u32) -> Result<SampleMap> {
     Ok(samples)
 }
 
+fn parse_retained_raw_stream(buf: &[u8], sample_rate: u32) -> Result<SampleMap> {
+    let mut live: HashMap<u64, LiveAlloc> = HashMap::new();
+    let mut p = 0usize;
+    let scale = sample_rate.max(1) as i64;
+    while p < buf.len() {
+        let tag = buf[p];
+        p += 1;
+        match tag {
+            b'A' => {
+                if p + 17 > buf.len() {
+                    break;
+                }
+                let ptr = u64::from_le_bytes(buf[p..p + 8].try_into().unwrap());
+                p += 8;
+                let size = u64::from_le_bytes(buf[p..p + 8].try_into().unwrap());
+                p += 8;
+                let nframes = buf[p] as usize;
+                p += 1;
+                let mut frames = Vec::with_capacity(nframes);
+                let mut ok = true;
+                for _ in 0..nframes {
+                    if p + 2 > buf.len() {
+                        ok = false;
+                        break;
+                    }
+                    let name_len = u16::from_le_bytes(buf[p..p + 2].try_into().unwrap()) as usize;
+                    p += 2;
+                    if p + name_len > buf.len() {
+                        ok = false;
+                        break;
+                    }
+                    let name = std::str::from_utf8(&buf[p..p + name_len])
+                        .unwrap_or("<bad utf8>")
+                        .to_string();
+                    p += name_len;
+                    frames.push(name);
+                }
+                if !ok {
+                    break;
+                }
+                if ptr == 0 {
+                    continue;
+                }
+                let leaf_start = frames
+                    .iter()
+                    .position(|n| !is_internal_frame(n))
+                    .unwrap_or(frames.len());
+                let user_frames: Vec<String> = frames.into_iter().skip(leaf_start).collect();
+                if user_frames.is_empty() {
+                    continue;
+                }
+                live.insert(
+                    ptr,
+                    LiveAlloc {
+                        frames: user_frames,
+                        count: scale,
+                        bytes: size as i64 * scale,
+                    },
+                );
+            }
+            b'F' => {
+                if p + 8 > buf.len() {
+                    break;
+                }
+                let ptr = u64::from_le_bytes(buf[p..p + 8].try_into().unwrap());
+                p += 8;
+                live.remove(&ptr);
+            }
+            _ => bail!(
+                "unknown retained raw record tag 0x{tag:02x} at offset {}",
+                p - 1
+            ),
+        }
+    }
+
+    let mut samples = SampleMap::default();
+    for alloc in live.into_values() {
+        let entry = samples.0.entry(alloc.frames).or_default();
+        entry.count += alloc.count;
+        entry.bytes += alloc.bytes;
+    }
+    Ok(samples)
+}
+
 fn is_internal_frame(name: &str) -> bool {
     let n = name.trim_start_matches('_');
     matches!(n, "malloc" | "calloc" | "realloc")
@@ -645,11 +808,29 @@ fn is_internal_frame(name: &str) -> bool {
 
 // ──────────────────────── pprof encoder ─────────────────────────────────
 
-fn encode_pprof(samples: SampleMap, no_demangle: bool) -> Result<Vec<u8>> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HeapProfileKind {
+    Alloc,
+    Inuse,
+}
+
+fn encode_pprof(
+    samples: SampleMap,
+    no_demangle: bool,
+    profile_kind: HeapProfileKind,
+) -> Result<Vec<u8>> {
     let mut s = StringPool::new();
-    let alloc_objs = s.intern("alloc_objects");
+    let objects_name = match profile_kind {
+        HeapProfileKind::Alloc => "alloc_objects",
+        HeapProfileKind::Inuse => "inuse_objects",
+    };
+    let space_name = match profile_kind {
+        HeapProfileKind::Alloc => "alloc_space",
+        HeapProfileKind::Inuse => "inuse_space",
+    };
+    let objects = s.intern(objects_name);
     let count_str = s.intern("count");
-    let alloc_space = s.intern("alloc_space");
+    let space = s.intern(space_name);
     let bytes_str = s.intern("bytes");
     let drop_pat = s.intern(
         "^_*(?:malloc|calloc|realloc|moonbit_malloc.*|moonbit_realloc.*|moonbit_make_.*|mi_.*|moon_pprof_.*|mpprof_.*)$",
@@ -719,11 +900,11 @@ fn encode_pprof(samples: SampleMap, no_demangle: bool) -> Result<Vec<u8>> {
     let profile = proto::Profile {
         sample_type: vec![
             proto::ValueType {
-                r#type: alloc_objs,
+                r#type: objects,
                 unit: count_str,
             },
             proto::ValueType {
-                r#type: alloc_space,
+                r#type: space,
                 unit: bytes_str,
             },
         ],
@@ -748,12 +929,12 @@ fn encode_pprof(samples: SampleMap, no_demangle: bool) -> Result<Vec<u8>> {
         time_nanos: 0,
         duration_nanos: 0,
         period_type: Some(proto::ValueType {
-            r#type: alloc_space,
+            r#type: space,
             unit: bytes_str,
         }),
         period: 1,
         comment: vec![],
-        default_sample_type: alloc_space,
+        default_sample_type: space,
         doc_url: 0,
     };
 
@@ -811,3 +992,104 @@ fn absolutize(p: &Path) -> Result<PathBuf> {
     Ok(cur)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use flate2::read::GzDecoder;
+    use std::io::Read as _;
+
+    #[test]
+    fn retained_patch_tracks_alloc_pointer_and_free_macro() {
+        let src = r#"
+#define moonbit_free(obj) libc_free(Moonbit_object_header(obj))
+static void *moonbit_malloc_inlined(size_t size) {
+  struct moonbit_object *ptr = (struct moonbit_object *)libc_malloc(
+      sizeof(struct moonbit_object) + size);
+  ptr->rc = 1;
+  return ptr + 1;
+}
+"#;
+
+        let out = patch_moonbit_malloc(src, HeapProfileMode::Retained).unwrap();
+        assert!(out.contains("__moon_pprof_alloc_ptr_hook(obj, size);"));
+        assert!(out.contains("extern void __moon_pprof_free_hook(void *);"));
+        assert!(out.contains("__moon_pprof_free_hook((void *)(obj))"));
+        assert!(out.contains("void *obj = ptr + 1;"));
+        assert!(out.contains("return obj;"));
+    }
+
+    #[test]
+    fn retained_parser_removes_freed_allocations() {
+        let mut buf = Vec::new();
+        push_retained_alloc(
+            &mut buf,
+            0x10,
+            40,
+            &["__moon_pprof_alloc_ptr_hook", "_Mlive"],
+        );
+        push_retained_alloc(&mut buf, 0x20, 8, &["_Mdead"]);
+        push_retained_free(&mut buf, 0x20);
+
+        let samples = parse_retained_raw_stream(&buf, 1).unwrap();
+        assert_eq!(samples.0.len(), 1);
+        let agg = samples.0.get(&vec!["_Mlive".to_string()]).unwrap();
+        assert_eq!(agg.count, 1);
+        assert_eq!(agg.bytes, 40);
+    }
+
+    #[test]
+    fn retained_encoder_uses_inuse_sample_types() {
+        let mut samples = SampleMap::default();
+        samples.0.insert(
+            vec!["leaf".to_string()],
+            SampleAgg {
+                count: 2,
+                bytes: 16,
+            },
+        );
+
+        let encoded = encode_pprof(samples, true, HeapProfileKind::Inuse).unwrap();
+        let profile = decode_pprof(&encoded);
+        assert_eq!(
+            pprof_string_at(&profile, profile.sample_type[0].r#type),
+            "inuse_objects"
+        );
+        assert_eq!(
+            pprof_string_at(&profile, profile.sample_type[1].r#type),
+            "inuse_space"
+        );
+        assert_eq!(profile.default_sample_type, profile.sample_type[1].r#type);
+    }
+
+    fn push_retained_alloc(buf: &mut Vec<u8>, ptr: u64, size: u64, frames: &[&str]) {
+        buf.push(b'A');
+        buf.extend_from_slice(&ptr.to_le_bytes());
+        buf.extend_from_slice(&size.to_le_bytes());
+        buf.push(frames.len() as u8);
+        for frame in frames {
+            let bytes = frame.as_bytes();
+            buf.extend_from_slice(&(bytes.len() as u16).to_le_bytes());
+            buf.extend_from_slice(bytes);
+        }
+    }
+
+    fn push_retained_free(buf: &mut Vec<u8>, ptr: u64) {
+        buf.push(b'F');
+        buf.extend_from_slice(&ptr.to_le_bytes());
+    }
+
+    fn decode_pprof(bytes: &[u8]) -> proto::Profile {
+        let mut decoder = GzDecoder::new(bytes);
+        let mut raw = Vec::new();
+        decoder.read_to_end(&mut raw).unwrap();
+        proto::Profile::decode(raw.as_slice()).unwrap()
+    }
+
+    fn pprof_string_at(profile: &proto::Profile, idx: i64) -> &str {
+        profile
+            .string_table
+            .get(idx as usize)
+            .map(String::as_str)
+            .unwrap_or("")
+    }
+}

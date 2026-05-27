@@ -12,6 +12,8 @@ format.
 > The fastest path is [`docs/quick-start.md`](docs/quick-start.md) —
 > install the CLI, profile the bundled sample wasm, read the summary in
 > under a minute.
+> For the pprof / Chrome trace / Speedscope / folded stack conversion
+> matrix, see [`docs/profile-formats.md`](docs/profile-formats.md).
 
 If you just want the CLI (any wasm → `profile` / `summary` /
 `cpuprofile2pprof` / `firefox2pprof`):
@@ -38,14 +40,17 @@ to pull them all in.
 The MoonBit-facing parts:
 
 - A single `moon-pprof` CLI for `profile` / `summary` / `bench` (plus
-  `cpuprofile2pprof` / `firefox2pprof` converters).
+  `cpuprofile2pprof` / `chrometrace2pprof` / `pprof2chrometrace` /
+  `pprof2folded` / `folded2pprof` / `pprof2speedscope` / `speedscope2pprof` /
+  `firefox2pprof` converters).
 - Demangles MoonBit symbols and lines up all four backends in the same
   pprof schema.
 - **baseline ↔ patched comparison workflow** for upstream PR experiments
   (`patched-toolchain` / `patched-mooncakes` / `moon-pprof bench`).
 
 The **internal libraries are MoonBit-agnostic**. The Rust crates
-`firefox-to-pprof` / `cpuprofile-to-pprof` / `wasmtime-guest-pprof` work
+`firefox-to-pprof` / `cpuprofile-to-pprof` / `chrome-trace-to-pprof` /
+`pprof-to-chrome-trace` / `pprof-stack-formats` / `wasmtime-guest-pprof` work
 unchanged for AssemblyScript / Rust / Zig wasm too.
 [→ Details](#reusing-for-non-moonbit-wasm)
 
@@ -90,9 +95,15 @@ go tool pprof -http :8000 wasm-gc.pb.gz              # browser UI
 | `moon-pprof summary --diff <a> <b>` | Per-function delta (improved / regressed / new / gone). Bytes-formatted when both inputs are heap profiles. |
 | `moon-pprof bench` | Multi-workload × multi-backend, baseline ↔ patched, markdown table out. |
 | `moon-pprof cpuprofile2pprof <in> <out>` | V8 `.cpuprofile` → pprof gzip (with MoonBit demangle by default; `--no-demangle` to disable). |
+| `moon-pprof chrometrace2pprof <in> <out>` | Chrome trace-event JSON with V8 CPU profiler `Profile` / `ProfileChunk` events → pprof gzip. Use `--profile-index` when one trace contains multiple streams. |
+| `moon-pprof pprof2chrometrace <in.pb.gz> <out.json>` | pprof CPU profile → synthetic Chrome trace-event JSON with V8 `Profile` / `ProfileChunk` events. Use `--expand-samples` to preserve `samples/count` on round-trip. |
+| `moon-pprof pprof2folded <in.pb.gz> <out.folded>` | pprof CPU profile → folded stacks (`root;child;leaf value`) for FlameGraph-style tooling. |
+| `moon-pprof folded2pprof <in.folded> <out.pb.gz>` | Folded stacks → pprof gzip. Defaults to `delay/microseconds`, useful for off-CPU / blocking profilers that emit folded stacks. |
+| `moon-pprof pprof2speedscope <in.pb.gz> <out.json>` | pprof CPU profile → Speedscope sampled JSON. |
+| `moon-pprof speedscope2pprof <in.json> <out.pb.gz>` | Speedscope sampled JSON → pprof gzip. |
 | `moon-pprof heapprofile2pprof <in> <out>` | V8 `.heapprofile` (sampling allocations) → pprof gzip with `alloc_objects` / `alloc_space` sample types. |
-| `moon-pprof memprofile <wasm>` | Allocation profile via wasm instrumentation. wasm (non-gc): wraps `moonbit.malloc` (covers raw + `moonbit.gc.malloc`). wasm-gc: rewrites every `struct.new` / `array.new*` opcode so the host hook fires with the alloc size. |
-| `moon-pprof memprofile-native <exe>` | Allocation profile for a `--target native` binary. Patches the generated `<cmd>.c`'s inline `moonbit_malloc` to call a backtrace-capturing hook, relinks via the project's own cc command, and emits pprof from the recorded stream. (macOS + Linux.) |
+| `moon-pprof memprofile <wasm>` | Allocation profile via wasm instrumentation. wasm (non-gc): wraps `moonbit.malloc`; wasm-gc: rewrites every `struct.new` / `array.new*` opcode. Add `--trace-out <trace.json>` for a Chrome trace allocation timeline. |
+| `moon-pprof memprofile-native <exe>` | Allocation profile for a `--target native` binary. Patches the generated `<cmd>.c`, relinks via the project's own cc command, and emits pprof from the recorded stream. Add `--retained` for `inuse_objects` / `inuse_space` retained heap. (macOS + Linux.) |
 | `moon-pprof firefox2pprof <in> <out>` | Firefox Profiler JSON → pprof. `--source samply --syms <sidecar>` for samply (RVA + inline expansion), default `--source wasmtime-guest` for wasmtime guest output. |
 | `moon-pprof perf2pprof <perf-script.txt>` | Linux `perf script` textual output → pprof gzip. Pair with `perf record -F 999 -g --weight -e cpu-clock` so the per-sample period is included. Lets you profile native MoonBit binaries on Linux where samply isn't available (containers, restricted hosts). |
 
@@ -217,9 +228,8 @@ V8's default sampling interval is 16 KiB. Pass
 `node runners/v8/run-js-heap.mjs … --interval <bytes>` to tighten or
 loosen it.
 
-`moon-pprof summary` currently mislabels heap values as nanoseconds
-(it's hard-coded for CPU). Use `go tool pprof` for the GUI / top view
-until it learns to read `period_type`.
+`moon-pprof summary` understands heap sample types for terminal top-N;
+use `go tool pprof` for the full GUI / source views.
 
 ### Memory profiling (wasm and wasm-gc)
 
@@ -227,7 +237,7 @@ until it learns to read `period_type`.
 # wasm (non-gc)
 npm run build:wasm
 .bin/moon-pprof memprofile bench/_build/wasm/release/build/cmd/main/main.wasm \
-  --out wasm-mem.pb.gz
+  --out wasm-mem.pb.gz --trace-out wasm-alloc.trace.json
 
 # wasm-gc
 npm run build:wasm-gc
@@ -259,6 +269,11 @@ At run time the hook captures the current wasm call stack with
 `(stack → (count, bytes))`. The pprof's `drop_frames` field hides
 `moonbit.malloc` / `moonbit.gc.malloc` so user code is the visible
 leaf.
+
+`--trace-out <trace.json>` also writes Chrome trace-event JSON with an
+allocation counter timeline (`bytes` / `objects`) plus per-sampled
+allocation instant events. This is allocation activity from the hook,
+not a true runtime GC pause trace.
 
 The two backends agree on totals (e.g. ~24.9 MB on the bigint_square
 workload), but the **shape differs**:
@@ -312,6 +327,12 @@ npm run build:native
   bench/_build/native/release/build/cmd/json_parse/json_parse.exe \
   --out native-mem.pb.gz --sample-rate 100
 go tool pprof -alloc_space -http :8000 native-mem.pb.gz
+
+# retained heap at process exit (exact with --sample-rate 1)
+.bin/moon-pprof memprofile-native \
+  bench/_build/native/release/build/cmd/json_parse/json_parse.exe \
+  --retained --out native-retained.pb.gz --sample-rate 1
+go tool pprof -inuse_space -http :8001 native-retained.pb.gz
 ```
 
 MoonBit's `--target native` backend statically links **mimalloc** into
@@ -330,6 +351,9 @@ generated C** and recompiling:
    `moon build --target native --release --dry-run`.
 2. Rewrite `moonbit_malloc_inlined`'s body in `<cmd>.c` to call
    `__moon_pprof_alloc_hook(size)` before the real `libc_malloc`.
+   With `--retained`, call `__moon_pprof_alloc_ptr_hook(ptr, size)`
+   after allocation and patch `moonbit_free(obj)` to call
+   `__moon_pprof_free_hook(obj)` before `libc_free`.
 3. Compile a bundled `native_alloc_hook.c` (uses `backtrace(3)` +
    `dladdr(3)`) with the same cc flags.
 4. Re-run the original cc command with the patched `.c` + hook `.o`,
@@ -337,10 +361,13 @@ generated C** and recompiling:
 5. Run `<cmd>.memprof.exe`. The hook writes a raw stream of
    `{bytes, symbols}` records to a tempfile.
 6. moon-pprof aggregates and emits gzip'd pprof with sample types
-   `alloc_objects/count` + `alloc_space/bytes`. `drop_frames` hides
+   `alloc_objects/count` + `alloc_space/bytes`, or with `--retained`
+   `inuse_objects/count` + `inuse_space/bytes`. `drop_frames` hides
    the hook, mimalloc, and runtime helpers so user code is the leaf.
 
-Same `--sample-rate <N>` semantics as the wasm path. On the
+Same `--sample-rate <N>` semantics as the wasm path. Retained heap is
+exact at `--sample-rate 1`; larger rates track only sampled allocations
+and scale the live bytes/counts. On the
 JSON parse workload, `--sample-rate 1` takes ~41 s and
 `--sample-rate 100` takes ~580 ms (~70× faster) with matching
 top-site attribution.
@@ -385,13 +412,16 @@ external projects.
 
 ### Rust
 
-All seven crates are on crates.io. Pick the ones you need:
+All ten crates are on crates.io. Pick the ones you need:
 
 ```toml
 [dependencies]
 moonbit-demangle      = "0.1"
 firefox-to-pprof      = "0.1"  # generic: samply / wasmtime JSON → pprof
 cpuprofile-to-pprof   = "0.1"  # generic: V8 .cpuprofile → pprof
+chrome-trace-to-pprof = "0.1"  # generic: Chrome trace-event V8 ProfileChunk → pprof
+pprof-to-chrome-trace = "0.1"  # generic: pprof → synthetic Chrome trace-event V8 ProfileChunk
+pprof-stack-formats   = "0.1"  # generic: pprof ↔ Speedscope, pprof ↔ folded stacks
 heapprofile-to-pprof  = "0.1"  # generic: V8 .heapprofile → pprof
 perf-to-pprof         = "0.1"  # generic: Linux `perf script` text → pprof
 wasmtime-guest-pprof  = "0.1"  # generic: drop into a wasmtime app
@@ -412,8 +442,11 @@ import {
 } from "@mizchi/moonbit-wasm-host";
 ```
 
-> The pprof / firefox / cpuprofile / demangle utilities have moved to
+> The pprof / firefox / cpuprofile / chrome-trace / demangle utilities have moved to
 > Rust crates. From the CLI use `moon-pprof cpuprofile2pprof` /
+> `moon-pprof chrometrace2pprof` / `moon-pprof pprof2chrometrace` /
+> `moon-pprof pprof2speedscope` / `moon-pprof speedscope2pprof` /
+> `moon-pprof pprof2folded` / `moon-pprof folded2pprof` /
 > `moon-pprof firefox2pprof`. What stays on the npm side is just the
 > host import (`spectest.print_char` / WASI `fd_write`) used to run a
 > MoonBit wasm under Node V8.
@@ -480,6 +513,11 @@ crates/                                 published libraries (Rust)
 ├── moonbit-wasm-host/                  moonbit wasm host imports (spectest / WASI)
 ├── firefox-to-pprof/                   Firefox Profiler JSON → pprof (generic)
 ├── cpuprofile-to-pprof/                V8 .cpuprofile → pprof (generic)
+├── chrome-trace-to-pprof/              Chrome trace-event V8 ProfileChunk → pprof (generic)
+├── pprof-to-chrome-trace/              pprof → synthetic Chrome trace-event V8 ProfileChunk (generic)
+├── pprof-stack-formats/                pprof ↔ Speedscope, pprof ↔ folded stacks (generic)
+├── heapprofile-to-pprof/               V8 .heapprofile → pprof (generic)
+├── perf-to-pprof/                      Linux perf script text → pprof (generic)
 └── wasmtime-guest-pprof/               wasmtime GuestProfiler driver + pprof (generic)
 
 packages/                               published library (npm)
@@ -494,6 +532,9 @@ runners/                                CLIs / binaries
     ├── run-wasm-gc.mjs                 wasm-gc under V8 (--via-v8)
     └── run-js.mjs                      js under V8
                                         (.cpuprofile → pprof: moon-pprof cpuprofile2pprof;
+                                         Chrome trace JSON → pprof: moon-pprof chrometrace2pprof;
+                                         pprof → Chrome trace JSON: moon-pprof pprof2chrometrace;
+                                         pprof ↔ Speedscope / folded: moon-pprof pprof2speedscope / speedscope2pprof / pprof2folded / folded2pprof;
                                          samply / wasmtime guest JSON → pprof: moon-pprof firefox2pprof)
 
 bench/                                  MoonBit bench workloads (ackermann / fib / mandel)

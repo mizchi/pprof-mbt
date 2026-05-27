@@ -10,12 +10,15 @@ keywords = ["moonbit", "pprof", "profiling", "wasmtime", "samply"]
 
 [dependencies]
 anyhow.workspace = true
+chrome-trace-to-pprof.workspace = true
 clap.workspace = true
 cpuprofile-to-pprof.workspace = true
 firefox-to-pprof.workspace = true
 heapprofile-to-pprof.workspace = true
 moonbit-demangle.workspace = true
 perf-to-pprof.workspace = true
+pprof-to-chrome-trace.workspace = true
+pprof-stack-formats.workspace = true
 walrus = "0.26"
 flate2.workspace = true
 moonbit-wasm-host.workspace = true

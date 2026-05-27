@@ -14,6 +14,9 @@ moon-pprof summary wasm-mem.pb.gz
 
 - `--sample-rate 100` is the default working point — 22× faster than
   exact, < 0.1 % deviation on top sites.
+- Add `--trace-out alloc.trace.json` when you need a Chrome trace
+  allocation timeline. It records allocation activity from the hook,
+  not runtime GC pauses.
 - wasm wraps `moonbit.malloc` (covers raw + `moonbit.gc.malloc`).
 - wasm-gc rewrites every `struct.new` / `array.new*` opcode so the
   host hook fires with the alloc size. The size is a field-sum
@@ -33,6 +36,19 @@ a backtrace hook inside `moonbit_malloc_inlined`, then relinking
 via the project's own cc command. The `.memprof.exe` sibling stays
 around for re-runs / inspection.
 
+For retained heap at process exit:
+
+```sh
+moon-pprof memprofile-native ./_build/native/release/build/cmd/<name>/main.exe \
+  --retained --sample-rate 1 --out native-retained.pb.gz
+go tool pprof -top -inuse_space native-retained.pb.gz
+```
+
+`--retained` patches both allocation and free paths and emits
+`inuse_objects/count` + `inuse_space/bytes`. `--sample-rate 1` is
+exact; larger rates track only sampled allocation pointers and scale
+the remaining live bytes/counts.
+
 For servers / event loops that never `return`, add `--duration N`
 (integer seconds) and the hook will flush + `_exit(0)` cleanly on
 SIGTERM. See `long-running.md`.
@@ -50,12 +66,12 @@ moon-pprof summary js-heap.pb.gz
 
 ## What "Total: X MB" actually means
 
-`memprofile` and `memprofile-native` report **bytes requested
+`memprofile` and default `memprofile-native` report **bytes requested
 through MoonBit's allocator surface**, not RSS. A workload that
 allocates 200 MB and frees it all the same tick will still show
-200 MB. Use `summary`'s top-N to rank sites, then verify with a
-narrower reproducer (e.g. wrap the suspicious function in a loop
-and re-profile) before drawing conclusions.
+200 MB. `memprofile-native --retained` instead reports live sampled
+allocations at process exit. Use `summary`'s top-N to rank sites,
+then verify with a narrower reproducer before drawing conclusions.
 
 ## Drill-down
 

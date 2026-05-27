@@ -171,11 +171,12 @@ fn value_axis(p: &Profile) -> ValueAxis {
         };
     }
 
-    // CPU / wall time profile.
+    // CPU / wall / wait-like time profile. Go block/mutex profiles use
+    // `delay`, and folded off-CPU imports default to the same axis.
     for (i, st) in p.sample_type.iter().enumerate() {
         let ty = string_at(p, st.r#type);
         let unit = string_at(p, st.unit);
-        if ty == "cpu" || ty == "wall" {
+        if is_time_sample_type(ty) {
             let (label, div) = match unit {
                 "nanoseconds" => ("ms", 1e6),
                 "microseconds" => ("ms", 1e3),
@@ -204,6 +205,13 @@ fn value_axis(p: &Profile) -> ValueAxis {
         secondary_idx: None,
         is_heap: false,
     }
+}
+
+fn is_time_sample_type(ty: &str) -> bool {
+    matches!(
+        ty,
+        "cpu" | "wall" | "delay" | "latency" | "block" | "blocked" | "off_cpu" | "wait"
+    )
 }
 
 fn string_at(p: &Profile, idx: i64) -> &str {
@@ -677,4 +685,46 @@ fn print_appeared_rows(
         );
     }
     println!();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn summary_prefers_delay_time_axis_for_blocking_profiles() {
+        let profile = Profile {
+            sample_type: vec![
+                firefox_to_pprof::proto::ValueType { r#type: 1, unit: 2 },
+                firefox_to_pprof::proto::ValueType { r#type: 3, unit: 4 },
+            ],
+            sample: vec![],
+            mapping: vec![],
+            location: vec![],
+            function: vec![],
+            string_table: ["", "samples", "count", "delay", "microseconds"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+            drop_frames: 0,
+            keep_frames: 0,
+            time_nanos: 0,
+            duration_nanos: 0,
+            period_type: None,
+            period: 0,
+            comment: vec![],
+            default_sample_type: 3,
+            doc_url: 0,
+        };
+
+        let axis = value_axis(&profile);
+        assert_eq!(axis.idx, 1);
+        match axis.kind {
+            AxisKind::Time { div, label } => {
+                assert_eq!(div, 1e3);
+                assert_eq!(label, "ms");
+            }
+            AxisKind::Bytes | AxisKind::Count(_) => panic!("expected time axis"),
+        }
+    }
 }

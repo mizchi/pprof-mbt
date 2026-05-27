@@ -1,6 +1,6 @@
 ---
 name: "moon-pprof"
-description: "Use when investigating MoonBit performance, locating allocation hot spots, comparing baseline vs patched, or profiling MoonBit code across native / wasm-gc / wasm / js backends. Trigger on requests like 'find what's slow / allocating', 'tune this', 'why is X expensive', 'profile this binary', 'where do allocs go', 'does this PR actually improve perf', or whenever a MoonBit benchmark or upstream-core / x / async investigation is on the table. Out of scope: non-MoonBit code that doesn't go through `moon build`."
+description: "Use when investigating MoonBit performance, locating CPU/allocation/retained-heap hot spots, comparing baseline vs patched, converting profiler formats to/from pprof/Chrome trace/Speedscope/folded stacks, or profiling MoonBit code across native / wasm-gc / wasm / js backends. Trigger on requests like 'find what's slow / allocating', 'show retained heap', 'convert this profile', 'make it visible in go tool pprof', 'why is X expensive', 'profile this binary', 'where do allocs go', 'does this PR actually improve perf', or whenever a MoonBit benchmark or upstream-core / x / async investigation is on the table. Out of scope: non-MoonBit code that doesn't go through `moon build`, except for generic profile format conversion commands."
 ---
 
 # moon-pprof — MoonBit performance profiler
@@ -23,6 +23,10 @@ Don't reach for the heavy tools first. Pick by what you want to learn:
 | "Where does the js backend spend CPU?" | `runners/v8/run-js.mjs … && moon-pprof cpuprofile2pprof` |
 | "What's allocating in wasm / wasm-gc?" | `moon-pprof memprofile <wasm>` |
 | "What's allocating in native?" | `moon-pprof memprofile-native <exe>` |
+| "What is still live at process exit?" | `moon-pprof memprofile-native <exe> --retained --sample-rate 1` |
+| "Can I see alloc activity over time?" | `moon-pprof memprofile <wasm> --trace-out alloc.trace.json` |
+| "Can I see off-CPU / blocking folded stacks in pprof?" | `moon-pprof folded2pprof wait.folded wait.pb.gz` |
+| "Can I move profiles between UIs?" | see `references/profile-formats.md` |
 | "Did this patch actually help?" | `moon-pprof summary --diff baseline.pb.gz patched.pb.gz` |
 | "Compare baseline vs patched across all backends" | `moon-pprof bench` with `--baseline-moon` / `--patched-moon` / `--mooncakes-baseline` / `--mooncakes-patched` |
 
@@ -48,6 +52,9 @@ documented in detail in `references/`:
 5. **Cross-backend bench** (`references/cross-backend-bench.md`) —
    prove the same MoonBit code behaves consistently (or doesn't)
    across native / wasm-gc / wasm / js.
+6. **Profile format conversion** (`references/profile-formats.md`) —
+   pprof ↔ Chrome trace / Speedscope / folded stacks, off-CPU import,
+   retained heap sample types, and which UI can read each output.
 
 ## Optimisation patterns worth knowing
 
@@ -81,6 +88,15 @@ the in-repo investigations:
 - `memprofile-native` on Linux needs the relink output to have
   `-rdynamic -ldl -lpthread` (handled automatically since
   `b115521`) so `dladdr` sees MoonBit symbols.
+- `memprofile-native --retained` emits `inuse_objects/count` +
+  `inuse_space/bytes`. Use `--sample-rate 1` for exact retained heap;
+  larger rates are sampled estimates.
+- `memprofile --trace-out` emits Chrome trace allocation activity,
+  not true runtime GC pause events. Treat it as "when allocations
+  happened", not "when GC stopped the world".
+- `folded2pprof` defaults to `delay/microseconds`, so `go tool pprof`
+  shows `Type: delay` and duration in seconds. Use it for folded
+  off-CPU / blocking input, not for ordinary CPU pprof round-trips.
 - `perf record` needs `--weight` for `perf script` to emit periods.
   Without it every sample becomes period=1 and the pprof has no
   wall-time scale. `moon-pprof perf2pprof` warns on this.

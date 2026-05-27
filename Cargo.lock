@@ -218,6 +218,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
+name = "chrome-trace-to-pprof"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "cpuprofile-to-pprof",
+ "firefox-to-pprof",
+ "flate2",
+ "prost",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "clap"
 version = "4.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -292,7 +305,7 @@ dependencies = [
 
 [[package]]
 name = "cpuprofile-to-pprof"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "firefox-to-pprof",
@@ -592,7 +605,7 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "firefox-to-pprof"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "flate2",
@@ -830,7 +843,7 @@ dependencies = [
 
 [[package]]
 name = "heapprofile-to-pprof"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "firefox-to-pprof",
@@ -859,7 +872,7 @@ dependencies = [
 
 [[package]]
 name = "http-baseline-server"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "tokio",
@@ -1120,9 +1133,10 @@ dependencies = [
 
 [[package]]
 name = "moon-pprof"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
+ "chrome-trace-to-pprof",
  "clap",
  "cpuprofile-to-pprof",
  "firefox-to-pprof",
@@ -1132,6 +1146,8 @@ dependencies = [
  "moonbit-demangle",
  "moonbit-wasm-host",
  "perf-to-pprof",
+ "pprof-stack-formats",
+ "pprof-to-chrome-trace",
  "prost",
  "regex",
  "serde_json",
@@ -1144,11 +1160,11 @@ dependencies = [
 
 [[package]]
 name = "moonbit-demangle"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "moonbit-wasm-host"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "wasmtime",
@@ -1192,7 +1208,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "perf-to-pprof"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "firefox-to-pprof",
@@ -1243,6 +1259,31 @@ dependencies = [
  "embedded-io 0.4.0",
  "embedded-io 0.6.1",
  "serde",
+]
+
+[[package]]
+name = "pprof-stack-formats"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "firefox-to-pprof",
+ "flate2",
+ "prost",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "pprof-to-chrome-trace"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "chrome-trace-to-pprof",
+ "firefox-to-pprof",
+ "flate2",
+ "prost",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2182,7 +2223,7 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-guest-pprof"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "firefox-to-pprof",

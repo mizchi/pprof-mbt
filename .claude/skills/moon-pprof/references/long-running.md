@@ -26,6 +26,22 @@ no `@async.with_timeout_opt`, no signal trap. The hook does it.
 Verified at 14M allocations over 3 seconds with the loop fixture
 (`notes/linux-memprofile/workload-loop/`).
 
+For retained heap in a long-running process, combine the duration
+timer with retained mode:
+
+```sh
+moon-pprof memprofile-native ./server.exe \
+  --duration 10 \
+  --retained \
+  --sample-rate 1 \
+  --out server-retained.pb.gz
+go tool pprof -top -inuse_space server-retained.pb.gz
+```
+
+This reports allocations still live at the forced exit point. With
+`--sample-rate >1`, retained bytes/counts are estimates because only
+sampled allocation pointers are tracked.
+
 ## CPU: `perf record` with a timeout
 
 `perf record` itself catches SIGTERM cleanly, so:

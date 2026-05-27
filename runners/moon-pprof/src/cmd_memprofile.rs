@@ -21,10 +21,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{anyhow, Context as _, Result};
 use clap::Parser;
-use flate2::Compression;
 use flate2::write::GzEncoder;
+use flate2::Compression;
 use moonbit_wasm_host::{MoonbitStdio, MoonbitStdioState};
 use prost::Message;
 use wasmtime::{
@@ -37,13 +37,20 @@ const HOOK_MODULE: &str = "moonbit_profile";
 const HOOK_FUNC: &str = "alloc_hook";
 
 #[derive(Parser, Debug)]
-#[command(about = "Capture an allocation profile of a MoonBit wasm by instrumenting moonbit.malloc.")]
+#[command(
+    about = "Capture an allocation profile of a MoonBit wasm by instrumenting moonbit.malloc."
+)]
 pub struct Args {
     /// Path to the .wasm file (wasm or wasm-gc; see note on wasm-gc below).
     pub wasm: PathBuf,
     /// Output path for the gzip'd pprof.
     #[arg(long, default_value = "wasm-mem.pb.gz")]
     pub out: PathBuf,
+    /// Optional Chrome trace-event JSON allocation timeline. This is
+    /// allocation activity derived from the instrumentation hook, not a
+    /// runtime GC pause trace.
+    #[arg(long)]
+    pub trace_out: Option<PathBuf>,
     /// How many times to invoke `_start`.
     #[arg(long, default_value_t = 1)]
     pub iterations: usize,
@@ -69,12 +76,12 @@ pub struct Args {
 }
 
 pub fn run(args: Args) -> Result<()> {
-    let wasm_bytes = fs::read(&args.wasm)
-        .with_context(|| format!("reading wasm at {}", args.wasm.display()))?;
+    let wasm_bytes =
+        fs::read(&args.wasm).with_context(|| format!("reading wasm at {}", args.wasm.display()))?;
 
     // Step 1: rewrite the wasm.
-    let (rewritten, report) = instrument(&wasm_bytes)
-        .context("instrumenting wasm with moonbit_profile.alloc_hook")?;
+    let (rewritten, report) =
+        instrument(&wasm_bytes).context("instrumenting wasm with moonbit_profile.alloc_hook")?;
     eprintln!(
         "[moon-pprof memprofile] instrumented: moonbit.malloc wrap={} gc-alloc-sites={}",
         report.moonbit_malloc_wrapped, report.gc_alloc_sites,
@@ -84,6 +91,10 @@ pub fn run(args: Args) -> Result<()> {
     // accumulator.
     let sample_rate = args.sample_rate.max(1);
     let samples = Arc::new(Mutex::new(SampleMap::default()));
+    let trace_state = args
+        .trace_out
+        .as_ref()
+        .map(|_| Arc::new(Mutex::new(AllocationTraceState::default())));
     let mut config = Config::new();
     config.cranelift_opt_level(wasmtime::OptLevel::Speed);
     // WasmBacktrace::force_capture needs address maps to map PCs back
@@ -110,6 +121,9 @@ pub fn run(args: Args) -> Result<()> {
         HostState {
             stdio: MoonbitStdioState::default(),
             samples: samples.clone(),
+            trace: trace_state.clone(),
+            trace_start: Instant::now(),
+            no_demangle: args.no_demangle,
             sample_rate,
             counter: 0,
         },
@@ -129,24 +143,33 @@ pub fn run(args: Args) -> Result<()> {
             }
             // Bump the per-store counter and decide whether to take a
             // stack this time. Scale = 1 means "always sample".
-            let scale = {
+            let (scale, trace, trace_start, no_demangle) = {
                 let st = caller.data_mut();
                 let n = st.counter;
                 st.counter = n.wrapping_add(1);
-                if st.sample_rate <= 1 {
+                let scale = if st.sample_rate <= 1 {
                     1
                 } else if n % st.sample_rate as u64 == 0 {
                     st.sample_rate as i64
                 } else {
                     return;
-                }
+                };
+                (scale, st.trace.clone(), st.trace_start, st.no_demangle)
             };
             let bt = WasmBacktrace::force_capture(&caller.as_context());
-            let frames: Vec<FrameKey> = bt
-                .frames()
-                .iter()
-                .map(FrameKey::from_frame_info)
-                .collect();
+            let frames: Vec<FrameKey> = bt.frames().iter().map(FrameKey::from_frame_info).collect();
+            if let Some(trace) = trace {
+                let ts_us = trace_start.elapsed().as_micros().min(u64::MAX as u128) as u64;
+                let top = frames
+                    .iter()
+                    .find(|f| !f.is_alloc_runtime())
+                    .or_else(|| frames.first())
+                    .map(|f| f.display_name(no_demangle))
+                    .unwrap_or_else(|| "(unknown)".to_string());
+                if let Ok(mut trace) = trace.lock() {
+                    trace.record(ts_us, size as i64, scale, top);
+                }
+            }
             if let Ok(mut map) = caller.data().samples.lock() {
                 let entry = map.0.entry(frames).or_default();
                 entry.count += scale;
@@ -158,6 +181,7 @@ pub fn run(args: Args) -> Result<()> {
     let instance = linker.instantiate(&mut store, &module)?;
     let start = instance.get_typed_func::<(), ()>(&mut store, "_start")?;
     let t0 = Instant::now();
+    store.data_mut().trace_start = t0;
     for _ in 0..args.iterations {
         start.call(&mut store, ())?;
     }
@@ -176,6 +200,13 @@ pub fn run(args: Args) -> Result<()> {
     let pprof_bytes = encode_pprof(samples, args.no_demangle)?;
     fs::write(&args.out, &pprof_bytes)
         .with_context(|| format!("writing {}", args.out.display()))?;
+    if let (Some(trace_out), Some(trace_state)) = (&args.trace_out, trace_state.as_ref()) {
+        let trace = trace_state
+            .lock()
+            .map_err(|_| anyhow!("allocation trace accumulator poisoned"))?;
+        let json = allocation_trace_json(&trace.events)?;
+        fs::write(trace_out, json).with_context(|| format!("writing {}", trace_out.display()))?;
+    }
 
     eprintln!(
         "[moon-pprof memprofile] {} iter in {:.2?} (sample-rate={}) → {}",
@@ -184,12 +215,21 @@ pub fn run(args: Args) -> Result<()> {
         sample_rate,
         args.out.display(),
     );
+    if let Some(trace_out) = &args.trace_out {
+        eprintln!(
+            "[moon-pprof memprofile] allocation trace → {}",
+            trace_out.display()
+        );
+    }
     Ok(())
 }
 
 struct HostState {
     stdio: MoonbitStdioState,
     samples: Arc<Mutex<SampleMap>>,
+    trace: Option<Arc<Mutex<AllocationTraceState>>>,
+    trace_start: Instant,
+    no_demangle: bool,
     sample_rate: u32,
     counter: u64,
 }
@@ -209,6 +249,38 @@ struct SampleAgg {
     bytes: i64,
 }
 
+#[derive(Default)]
+struct AllocationTraceState {
+    events: Vec<AllocationTraceEvent>,
+    cumulative_objects: i64,
+    cumulative_bytes: i64,
+}
+
+impl AllocationTraceState {
+    fn record(&mut self, ts_us: u64, size: i64, scale: i64, top_frame: String) {
+        let scaled_size = size.saturating_mul(scale);
+        self.cumulative_objects = self.cumulative_objects.saturating_add(scale);
+        self.cumulative_bytes = self.cumulative_bytes.saturating_add(scaled_size);
+        self.events.push(AllocationTraceEvent {
+            ts_us,
+            size,
+            scaled_size,
+            cumulative_objects: self.cumulative_objects,
+            cumulative_bytes: self.cumulative_bytes,
+            top_frame,
+        });
+    }
+}
+
+struct AllocationTraceEvent {
+    ts_us: u64,
+    size: i64,
+    scaled_size: i64,
+    cumulative_objects: i64,
+    cumulative_bytes: i64,
+    top_frame: String,
+}
+
 /// What we keep per frame across the lifetime of the run. Using
 /// `(func_index, optional name)` keeps the key small while preserving
 /// enough info to render the pprof later.
@@ -225,6 +297,65 @@ impl FrameKey {
             name: f.func_name().map(|s| s.to_string()),
         }
     }
+
+    fn raw_name(&self) -> String {
+        self.name
+            .clone()
+            .unwrap_or_else(|| format!("func[{}]", self.func_index))
+    }
+
+    fn display_name(&self, no_demangle: bool) -> String {
+        let raw = self.raw_name();
+        if no_demangle {
+            raw
+        } else {
+            moonbit_demangle::demangle(&raw)
+        }
+    }
+
+    fn is_alloc_runtime(&self) -> bool {
+        matches!(
+            self.name.as_deref(),
+            Some("moonbit.malloc" | "moonbit.gc.malloc")
+        )
+    }
+}
+
+fn allocation_trace_json(events: &[AllocationTraceEvent]) -> Result<String> {
+    let mut trace_events = Vec::with_capacity(events.len() * 2);
+    for event in events {
+        trace_events.push(serde_json::json!({
+            "name": "allocations",
+            "cat": "moon-pprof",
+            "ph": "C",
+            "pid": 1,
+            "tid": 1,
+            "ts": event.ts_us,
+            "args": {
+                "bytes": event.cumulative_bytes,
+                "objects": event.cumulative_objects,
+            },
+        }));
+        trace_events.push(serde_json::json!({
+            "name": "allocation",
+            "cat": "moon-pprof",
+            "ph": "i",
+            "s": "t",
+            "pid": 1,
+            "tid": 1,
+            "ts": event.ts_us,
+            "args": {
+                "size": event.size,
+                "scaled_size": event.scaled_size,
+                "top": event.top_frame,
+            },
+        }));
+    }
+    serde_json::to_string_pretty(&serde_json::json!({
+        "traceEvents": trace_events,
+        "displayTimeUnit": "ms",
+    }))
+    .context("encoding allocation Chrome trace JSON")
 }
 
 #[derive(Default, Debug, Clone, Copy)]
@@ -236,13 +367,11 @@ struct InstrumentReport {
 }
 
 fn instrument(wasm_bytes: &[u8]) -> Result<(Vec<u8>, InstrumentReport)> {
-    let mut module = walrus::Module::from_buffer(wasm_bytes)
-        .context("parsing wasm with walrus")?;
+    let mut module = walrus::Module::from_buffer(wasm_bytes).context("parsing wasm with walrus")?;
 
     // The hook signature is shared by both paths.
     let hook_type = module.types.add(&[walrus::ValType::I32], &[]);
-    let (hook_fn, _) =
-        module.add_import_func(HOOK_MODULE, HOOK_FUNC, hook_type);
+    let (hook_fn, _) = module.add_import_func(HOOK_MODULE, HOOK_FUNC, hook_type);
 
     let mut report = InstrumentReport::default();
 
@@ -433,9 +562,7 @@ fn instrument_gc_allocs_in_func(
             let static_size = match &instr {
                 Instr::StructNew(s) => sizes.get_struct(s.ty),
                 Instr::StructNewDefault(s) => sizes.get_struct(s.ty),
-                Instr::ArrayNewFixed(a) => {
-                    sizes.get_array_elem(a.ty).map(|e| e * a.len as i32)
-                }
+                Instr::ArrayNewFixed(a) => sizes.get_array_elem(a.ty).map(|e| e * a.len as i32),
                 _ => None,
             };
             if let Some(size) = static_size {
@@ -446,10 +573,7 @@ fn instrument_gc_allocs_in_func(
                         }),
                         Default::default(),
                     ));
-                    new.push((
-                        Instr::Call(Call { func: hook_fn }),
-                        Default::default(),
-                    ));
+                    new.push((Instr::Call(Call { func: hook_fn }), Default::default()));
                 }
                 new.push((instr, loc));
                 count += 1;
@@ -504,10 +628,7 @@ fn instrument_gc_allocs_in_func(
                         }),
                         Default::default(),
                     ));
-                    new.push((
-                        Instr::Call(Call { func: hook_fn }),
-                        Default::default(),
-                    ));
+                    new.push((Instr::Call(Call { func: hook_fn }), Default::default()));
                     new.push((
                         Instr::LocalGet(LocalGet { local: scratch }),
                         Default::default(),
@@ -568,10 +689,7 @@ fn encode_pprof(samples: SampleMap, no_demangle: bool) -> Result<Vec<u8>> {
     for (frames, agg) in samples.0 {
         // WasmBacktrace frames are leaf-first already, which matches
         // pprof's location_id ordering.
-        let location_ids: Vec<u64> = frames
-            .iter()
-            .map(|f| state.intern_location(f))
-            .collect();
+        let location_ids: Vec<u64> = frames.iter().map(|f| state.intern_location(f)).collect();
         if location_ids.is_empty() {
             continue;
         }
@@ -673,15 +791,8 @@ impl State {
         if let Some(&id) = self.func_index.get(&frame.func_index) {
             return id;
         }
-        let raw = frame
-            .name
-            .clone()
-            .unwrap_or_else(|| format!("func[{}]", frame.func_index));
-        let pretty = if self.no_demangle {
-            raw.clone()
-        } else {
-            moonbit_demangle::demangle(&raw)
-        };
+        let raw = frame.raw_name();
+        let pretty = frame.display_name(self.no_demangle);
         let id = (self.functions.len() + 1) as u64;
         let name = self.intern(&pretty);
         let system_name = self.intern(&raw);
@@ -761,5 +872,22 @@ mod tests {
             body.contains("call ") && body.lines().any(|l| l.trim_start().starts_with("call ")),
             "no call instruction in instrumented body:\n{body}"
         );
+    }
+
+    #[test]
+    fn allocation_trace_json_emits_chrome_counter_events() {
+        let mut trace = AllocationTraceState::default();
+        trace.record(42, 16, 2, "leaf".to_string());
+
+        let json = allocation_trace_json(&trace.events).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let events = value["traceEvents"].as_array().unwrap();
+        assert_eq!(events[0]["ph"], "C");
+        assert_eq!(events[0]["name"], "allocations");
+        assert_eq!(events[0]["ts"], 42);
+        assert_eq!(events[0]["args"]["bytes"], 32);
+        assert_eq!(events[0]["args"]["objects"], 2);
+        assert_eq!(events[1]["ph"], "i");
+        assert_eq!(events[1]["args"]["top"], "leaf");
     }
 }

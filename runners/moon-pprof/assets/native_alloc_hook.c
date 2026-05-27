@@ -6,13 +6,25 @@
 // append a binary record to `$MOON_PPROF_RAW_OUTPUT`. The Rust side
 // aggregates and emits the gzip'd pprof.
 //
-// Record format (binary stream, little-endian, host byte order):
-//   for each sampled alloc:
+// Alloc record format (binary stream, little-endian, host byte order):
+//   for each sampled alloc via __moon_pprof_alloc_hook:
 //     u64  size          // bytes requested, pre-scaling
 //     u8   nframes       // number of frames that follow, ≤ 64
 //     for each frame:
 //       u16 name_len     // bytes in symbol name
 //       u8  name[name_len]  // dladdr symbol name (or "0x<addr>" fallback)
+//
+// Retained record format, enabled by MOON_PPROF_RETAINED=1 and used
+// with __moon_pprof_alloc_ptr_hook / __moon_pprof_free_hook:
+//   sampled alloc:
+//     u8   tag = 'A'
+//     u64  ptr
+//     u64  size
+//     u8   nframes
+//     repeated frame names as above
+//   free:
+//     u8   tag = 'F'
+//     u64  ptr
 //
 // Scaling for 1/N sampling is applied on the Rust side based on
 // $MOON_PPROF_SAMPLE_RATE.
@@ -34,6 +46,7 @@ static __thread int mpprof_in_hook = 0;
 static FILE *mpprof_out = NULL;
 static uint64_t mpprof_counter = 0;
 static uint64_t mpprof_rate = 1;
+static int mpprof_retained = 0;
 static pthread_mutex_t mpprof_mu = PTHREAD_MUTEX_INITIALIZER;
 static volatile sig_atomic_t mpprof_finished = 0;
 
@@ -77,6 +90,10 @@ static void mpprof_init(void) {
     if (v >= 1) {
       mpprof_rate = (uint64_t)v;
     }
+  }
+  const char *retained = getenv("MOON_PPROF_RETAINED");
+  if (retained && *retained && strcmp(retained, "0") != 0) {
+    mpprof_retained = 1;
   }
   // Install handlers only if we actually have a file to flush —
   // otherwise leave the user binary's default signal disposition
@@ -165,6 +182,106 @@ void __moon_pprof_alloc_hook(size_t size) {
     kept++;
   }
   buf[nframes_pos] = (unsigned char)kept;
+
+  pthread_mutex_lock(&mpprof_mu);
+  if (mpprof_out) {
+    fwrite(buf, 1, pos, mpprof_out);
+  }
+  pthread_mutex_unlock(&mpprof_mu);
+
+  mpprof_in_hook = 0;
+}
+
+__attribute__((weak)) void __moon_pprof_alloc_ptr_hook(void *ptr, size_t size);
+void __moon_pprof_alloc_ptr_hook(void *ptr, size_t size) {
+  if (mpprof_in_hook) {
+    return;
+  }
+  if (mpprof_out == NULL || !mpprof_retained || ptr == NULL) {
+    return;
+  }
+  mpprof_in_hook = 1;
+
+  pthread_mutex_lock(&mpprof_mu);
+  uint64_t n = ++mpprof_counter;
+  int do_sample = (mpprof_rate <= 1) || (((n - 1) % mpprof_rate) == 0);
+  pthread_mutex_unlock(&mpprof_mu);
+  if (!do_sample) {
+    mpprof_in_hook = 0;
+    return;
+  }
+
+  void *bt[64];
+  int nframes = backtrace(bt, 64);
+  if (nframes <= 0) {
+    mpprof_in_hook = 0;
+    return;
+  }
+  if (nframes > 255) nframes = 255;
+
+  unsigned char buf[8192];
+  size_t pos = 0;
+
+  buf[pos++] = 'A';
+  uint64_t ptr64 = (uint64_t)(uintptr_t)ptr;
+  memcpy(buf + pos, &ptr64, sizeof(ptr64));
+  pos += sizeof(ptr64);
+
+  uint64_t bytes64 = (uint64_t)size;
+  memcpy(buf + pos, &bytes64, sizeof(bytes64));
+  pos += sizeof(bytes64);
+
+  size_t nframes_pos = pos++;
+
+  int kept = 0;
+  for (int i = 0; i < nframes; i++) {
+    if (pos + 2 + 250 > sizeof(buf)) break;
+    Dl_info di;
+    memset(&di, 0, sizeof(di));
+    const char *name = NULL;
+    char fallback[32];
+    if (dladdr(bt[i], &di) && di.dli_sname) {
+      name = di.dli_sname;
+    } else {
+      snprintf(fallback, sizeof(fallback), "0x%lx",
+               (unsigned long)(uintptr_t)bt[i]);
+      name = fallback;
+    }
+    size_t name_len = strnlen(name, 250);
+    uint16_t name_len16 = (uint16_t)name_len;
+    memcpy(buf + pos, &name_len16, sizeof(name_len16));
+    pos += sizeof(name_len16);
+    memcpy(buf + pos, name, name_len);
+    pos += name_len;
+    kept++;
+  }
+  buf[nframes_pos] = (unsigned char)kept;
+
+  pthread_mutex_lock(&mpprof_mu);
+  if (mpprof_out) {
+    fwrite(buf, 1, pos, mpprof_out);
+  }
+  pthread_mutex_unlock(&mpprof_mu);
+
+  mpprof_in_hook = 0;
+}
+
+__attribute__((weak)) void __moon_pprof_free_hook(void *ptr);
+void __moon_pprof_free_hook(void *ptr) {
+  if (mpprof_in_hook) {
+    return;
+  }
+  if (mpprof_out == NULL || !mpprof_retained || ptr == NULL) {
+    return;
+  }
+  mpprof_in_hook = 1;
+
+  unsigned char buf[1 + sizeof(uint64_t)];
+  size_t pos = 0;
+  buf[pos++] = 'F';
+  uint64_t ptr64 = (uint64_t)(uintptr_t)ptr;
+  memcpy(buf + pos, &ptr64, sizeof(ptr64));
+  pos += sizeof(ptr64);
 
   pthread_mutex_lock(&mpprof_mu);
   if (mpprof_out) {
