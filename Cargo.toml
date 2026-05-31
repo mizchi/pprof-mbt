@@ -16,23 +16,23 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/mizchi/moon-pprof"
 
 [workspace.dependencies]
 # Internal crates — version is the workspace version above.
-moonbit-demangle = { path = "crates/moonbit-demangle", version = "0.1.1" }
-moonbit-wasm-host = { path = "crates/moonbit-wasm-host", version = "0.1.1" }
-firefox-to-pprof = { path = "crates/firefox-to-pprof", version = "0.1.1" }
-cpuprofile-to-pprof = { path = "crates/cpuprofile-to-pprof", version = "0.1.1" }
-chrome-trace-to-pprof = { path = "crates/chrome-trace-to-pprof", version = "0.1.1" }
-pprof-to-chrome-trace = { path = "crates/pprof-to-chrome-trace", version = "0.1.1" }
-pprof-stack-formats = { path = "crates/pprof-stack-formats", version = "0.1.1" }
-heapprofile-to-pprof = { path = "crates/heapprofile-to-pprof", version = "0.1.1" }
-perf-to-pprof = { path = "crates/perf-to-pprof", version = "0.1.1" }
-wasmtime-guest-pprof = { path = "crates/wasmtime-guest-pprof", version = "0.1.1" }
+moonbit-demangle = { path = "crates/moonbit-demangle", version = "0.1.2" }
+moonbit-wasm-host = { path = "crates/moonbit-wasm-host", version = "0.1.2" }
+firefox-to-pprof = { path = "crates/firefox-to-pprof", version = "0.1.2" }
+cpuprofile-to-pprof = { path = "crates/cpuprofile-to-pprof", version = "0.1.2" }
+chrome-trace-to-pprof = { path = "crates/chrome-trace-to-pprof", version = "0.1.2" }
+pprof-to-chrome-trace = { path = "crates/pprof-to-chrome-trace", version = "0.1.2" }
+pprof-stack-formats = { path = "crates/pprof-stack-formats", version = "0.1.2" }
+heapprofile-to-pprof = { path = "crates/heapprofile-to-pprof", version = "0.1.2" }
+perf-to-pprof = { path = "crates/perf-to-pprof", version = "0.1.2" }
+wasmtime-guest-pprof = { path = "crates/wasmtime-guest-pprof", version = "0.1.2" }
 
 # Shared third-party deps. Pinned in one place so the runner and the
 # library crates stay in lockstep.
