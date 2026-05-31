@@ -35,6 +35,7 @@ mod cmd_pprof2speedscope;
 mod cmd_profile;
 mod cmd_speedscope2pprof;
 mod cmd_summary;
+mod wasmtime_config;
 
 #[derive(Parser, Debug)]
 #[command(

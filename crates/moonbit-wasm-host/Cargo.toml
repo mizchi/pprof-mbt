@@ -13,3 +13,6 @@ keywords = ["moonbit", "wasmtime", "host-imports"]
 [dependencies]
 anyhow.workspace = true
 wasmtime.workspace = true
+
+[dev-dependencies]
+wat = "1.250.0"

@@ -16,8 +16,10 @@ use clap::Parser;
 use moonbit_wasm_host::{MoonbitStdio, MoonbitStdioState};
 use wasmtime::{Config, Engine, Linker, Module, Store};
 use wasmtime_guest_pprof::{
-    ProfileSession, ProfilerHost, ProfilerHostExt as _, TakeProfileSession, json_to_pprof,
+    json_to_pprof, ProfileSession, ProfilerHost, ProfilerHostExt as _, TakeProfileSession,
 };
+
+use crate::wasmtime_config::enable_moonbit_wasm_features;
 
 #[derive(Parser, Debug)]
 #[command(about = "Profile a MoonBit wasm with wasmtime's guest profiler")]
@@ -73,8 +75,8 @@ impl TakeProfileSession for HostState {
 }
 
 pub fn run(args: Args) -> Result<()> {
-    let wasm_bytes = fs::read(&args.wasm)
-        .with_context(|| format!("reading wasm at {}", args.wasm.display()))?;
+    let wasm_bytes =
+        fs::read(&args.wasm).with_context(|| format!("reading wasm at {}", args.wasm.display()))?;
 
     let mut config = Config::new();
     if !args.no_profile {
@@ -82,13 +84,7 @@ pub fn run(args: Args) -> Result<()> {
     }
     config.cranelift_opt_level(wasmtime::OptLevel::Speed);
     config.generate_address_map(true);
-    // wasm-gc is always enabled: legacy wasm binaries don't use any of
-    // these proposals so leaving them on is a no-op for them, and wasm-gc
-    // binaries need them. wasm-gc requires function-references and
-    // reference-types as prerequisites (the spec layers them).
-    config.wasm_reference_types(true);
-    config.wasm_function_references(true);
-    config.wasm_gc(true);
+    enable_moonbit_wasm_features(&mut config);
     // ackermann(3, 10) recurses ~16k deep — moonbit emits >32 bytes/frame so
     // the default 512 KiB wasm stack overflows. Bump both wasm + host caps.
     config.async_stack_size(16 * 1024 * 1024);
@@ -121,6 +117,7 @@ pub fn run(args: Args) -> Result<()> {
 
     let mut linker: Linker<HostState> = Linker::new(&engine);
     moonbit_wasm_host::register(&mut linker)?;
+    moonbit_wasm_host::register_store_imports(&mut linker, &mut store)?;
 
     let instance = linker.instantiate(&mut store, &module)?;
     let start = instance.get_typed_func::<(), ()>(&mut store, "_start")?;
@@ -145,8 +142,7 @@ pub fn run(args: Args) -> Result<()> {
     session.into_json(&mut json)?;
 
     if let Some(json_path) = args.json_out.as_ref() {
-        fs::write(json_path, &json)
-            .with_context(|| format!("writing {}", json_path.display()))?;
+        fs::write(json_path, &json).with_context(|| format!("writing {}", json_path.display()))?;
     }
     let pprof_bytes = json_to_pprof(&json)?;
     fs::write(&args.out, &pprof_bytes)

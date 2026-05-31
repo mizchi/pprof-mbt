@@ -31,6 +31,7 @@ use wasmtime::{
     AsContext, Caller, Config, Engine, FrameInfo, Linker, Module, Store, WasmBacktrace,
 };
 
+use crate::wasmtime_config::enable_moonbit_wasm_features;
 use firefox_to_pprof::proto;
 
 const HOOK_MODULE: &str = "moonbit_profile";
@@ -104,14 +105,7 @@ pub fn run(args: Args) -> Result<()> {
     // Match cmd_profile so deeply-recursive workloads don't overflow.
     config.async_stack_size(16 * 1024 * 1024);
     config.max_wasm_stack(8 * 1024 * 1024);
-    // wasm-gc binaries land here too, even though MoonBit's wasm-gc
-    // backend uses `struct.new` (which we don't instrument). Leaving
-    // the proposals enabled keeps the runner usable for the wasm
-    // backend's gc.malloc path (refcount header allocations) which
-    // *does* go through moonbit.malloc.
-    config.wasm_reference_types(true);
-    config.wasm_function_references(true);
-    config.wasm_gc(true);
+    enable_moonbit_wasm_features(&mut config);
 
     let engine = Engine::new(&config)?;
     let module = Module::new(&engine, &rewritten)?;
@@ -131,6 +125,7 @@ pub fn run(args: Args) -> Result<()> {
 
     let mut linker: Linker<HostState> = Linker::new(&engine);
     moonbit_wasm_host::register(&mut linker)?;
+    moonbit_wasm_host::register_store_imports(&mut linker, &mut store)?;
     linker.func_wrap(
         HOOK_MODULE,
         HOOK_FUNC,
